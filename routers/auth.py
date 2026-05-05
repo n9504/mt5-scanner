@@ -1,11 +1,23 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
-from passlib.context import CryptContext
+import hashlib, secrets
 from core.database import supabase_admin
 from core.auth import create_token
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
-pwd   = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(32)
+    h = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 260000)
+    return f"{salt}${h.hex()}"
+
+def verify_password(password: str, hashed: str) -> bool:
+    try:
+        salt, h = hashed.split('$')
+        check = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 260000)
+        return check.hex() == h
+    except Exception:
+        return False
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -24,7 +36,7 @@ async def register(body: RegisterRequest):
     if existing.data:
         raise HTTPException(400, "Email already registered")
 
-    hashed = pwd.hash(body.password[:72])
+    hashed = hash_password(body.password)
     res = supabase_admin.table("tenants").insert({
         "email":         body.email,
         "name":          body.name,
@@ -59,7 +71,7 @@ async def login(body: LoginRequest):
     tenant = res.data
     if not tenant["active"]:
         raise HTTPException(403, "Account suspended")
-    if not pwd.verify(body.password[:72], tenant["password_hash"]):
+    if not verify_password(body.password, tenant["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
 
     token = create_token(tenant["id"])
