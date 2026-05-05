@@ -5,7 +5,7 @@ from core.database import supabase_admin
 from core.auth import create_token
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
-pwd   = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd   = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -24,7 +24,7 @@ async def register(body: RegisterRequest):
     if existing.data:
         raise HTTPException(400, "Email already registered")
 
-    hashed = pwd.hash(body.password)
+    hashed = pwd.hash(body.password[:72])
     res = supabase_admin.table("tenants").insert({
         "email":         body.email,
         "name":          body.name,
@@ -59,7 +59,7 @@ async def login(body: LoginRequest):
     tenant = res.data
     if not tenant["active"]:
         raise HTTPException(403, "Account suspended")
-    if not pwd.verify(body.password, tenant["password_hash"]):
+    if not pwd.verify(body.password[:72], tenant["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
 
     token = create_token(tenant["id"])
