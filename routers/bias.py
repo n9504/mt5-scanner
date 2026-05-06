@@ -49,7 +49,7 @@ async def sync_bias(
 @router.get("")
 async def get_bias(
     scanner:   Optional[str] = None,
-    tenant_id: str = Depends(get_tenant_by_api_key)
+    tenant_id: str = Depends(get_current_tenant)
 ):
     query = supabase_admin.table("scanner_bias")\
         .select("*")\
