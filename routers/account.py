@@ -74,3 +74,10 @@ async def get_accounts(
         .eq("active", True)\
         .execute()
     return res.data or []
+
+@router.get("/by-key")
+async def get_accounts_by_key(
+    tenant_id: str = Depends(get_tenant_by_api_key)
+):
+    res = supabase_admin.table("accounts")        .select("*")        .eq("tenant_id", tenant_id)        .eq("active", True)        .execute()
+    return res.data or []
