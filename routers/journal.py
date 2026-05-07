@@ -191,6 +191,37 @@ Rules:
         existing = trade.get("tags") or []
         merged   = list(set(existing + all_tags))
 
+        # Calculate simulated balances from all open trades
+        sim_tp_pnl = 0.0; sim_sl_pnl = 0.0
+        try:
+            open_res = supabase_admin.table("trades").select(
+                "entry_price,sl,tp,lot,bias,symbol"
+            ).eq("tenant_id", tenant_id).eq("status","OPEN").execute()
+            open_trades = open_res.data or []
+            for ot in open_trades:
+                e = float(ot.get("entry_price") or 0)
+                s = float(ot.get("sl") or 0)
+                t_price = float(ot.get("tp") or 0)
+                lot_size = float(ot.get("lot") or 0)
+                b = ot.get("bias","BUY")
+                sym = ot.get("symbol","")
+                # Pip value approximation
+                pip_val = 10 if "JPY" not in sym and sym not in ["XAUUSD","BTCUSD","ETHUSD","US30","NAS100","GER40"] else 1
+                if t_price and s and e and lot_size:
+                    if b == "BUY":
+                        sim_tp_pnl += (t_price - e) * lot_size * pip_val * 10000 if "JPY" not in sym else (t_price - e) * lot_size * pip_val * 100
+                        sim_sl_pnl += (s - e) * lot_size * pip_val * 10000 if "JPY" not in sym else (s - e) * lot_size * pip_val * 100
+                    else:
+                        sim_tp_pnl += (e - t_price) * lot_size * pip_val * 10000 if "JPY" not in sym else (e - t_price) * lot_size * pip_val * 100
+                        sim_sl_pnl += (e - s) * lot_size * pip_val * 10000 if "JPY" not in sym else (e - s) * lot_size * pip_val * 100
+        except Exception as se:
+            print(f"[Sim balance error] {se}")
+
+        # Add simulation to result
+        result["sim_tp_pnl"]  = round(sim_tp_pnl, 2)
+        result["sim_sl_pnl"]  = round(sim_sl_pnl, 2)
+        result["open_count"]  = len(open_trades) if 'open_trades' in dir() else 0
+
         supabase_admin.table("trades").update({
             "tags":           merged,
             "entry_analysis": json.dumps(result),
@@ -298,6 +329,11 @@ Other fields:
 
         emotion_tags = result.get("emotion_tags", [])
 
+        # Rule-based behaviour tags from outcome (override AI emotion guesses)
+        behaviour_tag = _get_behaviour_tag(trade)
+        if behaviour_tag and behaviour_tag not in emotion_tags:
+            emotion_tags.append(behaviour_tag)
+
         # Add result tag
         result_tag = _get_result_tag(outcome)
         all_new_tags = emotion_tags + ([result_tag] if result_tag else [])
@@ -328,6 +364,44 @@ def _get_session_tag(open_time: str) -> str:
         elif 7 <= h < 12: return "London"
         elif 12 <= h < 21: return "US"
     except Exception: pass
+    return ""
+
+
+def _get_behaviour_tag(trade: dict) -> str:
+    """
+    Rule-based behaviour detection from trade outcome.
+    Calm      = hit TP exactly as planned
+    Conservative = closed 60-90% of way to TP (trail/manual early exit)
+    Fear      = closed < 50% of way to TP on a winning trade
+    Disciplined = followed plan, closed at SL as planned
+    """
+    outcome    = str(trade.get("execution_outcome","")).upper()
+    entry      = float(trade.get("entry_price") or 0)
+    close_price= float(trade.get("close_price") or 0)
+    tp         = float(trade.get("tp") or 0)
+    sl         = float(trade.get("sl") or 0)
+    bias       = str(trade.get("bias","BUY"))
+
+    if not entry or not close_price: return ""
+
+    if "WIN_TP" in outcome: return "Calm"
+    if "LOSS_SL" in outcome: return "Disciplined"
+
+    # Manual/trail close — determine how far toward TP
+    if tp and sl and entry:
+        total_dist = abs(tp - entry)
+        if total_dist > 0:
+            if bias == "BUY":
+                achieved = close_price - entry
+            else:
+                achieved = entry - close_price
+            pct = achieved / total_dist * 100 if total_dist else 0
+
+            if pct >= 90:   return "Calm"
+            if pct >= 60:   return "Conservative"
+            if pct >= 0:    return "Fear"
+            if pct < 0:     return "Disciplined"  # closed at loss
+
     return ""
 
 
