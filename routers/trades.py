@@ -128,16 +128,18 @@ async def list_trades(
     if symbol:  query = query.eq("symbol", symbol)
 
     today = str(date.today())
-    if period == "today":
-        query = query.gte("close_time", f"{today}T00:00:00")
-    elif period == "week":
-        from datetime import timedelta, datetime
-        mon = (datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())).strftime("%Y-%m-%d")
-        query = query.gte("close_time", f"{mon}T00:00:00")
-    elif period == "month":
-        from datetime import datetime
-        mon = datetime.utcnow().strftime("%Y-%m")
-        query = query.like("close_time", f"{mon}%")
+    # Only apply period filter for closed trades
+    if status != "OPEN":
+        if period == "today":
+            query = query.gte("close_time", f"{today}T00:00:00")
+        elif period == "week":
+            from datetime import timedelta, datetime
+            mon = (datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())).strftime("%Y-%m-%d")
+            query = query.gte("close_time", f"{mon}T00:00:00")
+        elif period == "month":
+            from datetime import datetime
+            mon = datetime.utcnow().strftime("%Y-%m")
+            query = query.like("close_time", f"{mon}%")
 
     res = query.execute()
     return res.data or []
