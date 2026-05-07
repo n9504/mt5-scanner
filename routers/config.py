@@ -16,6 +16,18 @@ class ConfigUpdate(BaseModel):
     lot_sizes:          Optional[dict]  = None
     trading_start_utc:  Optional[int]   = None
     trading_end_utc:    Optional[int]   = None
+    # Account setup fields
+    account_type:       Optional[str]   = None  # personal, prop
+    daily_target:       Optional[float] = None
+    daily_loss_cap:     Optional[float] = None
+    risk_per_trade:     Optional[float] = None
+    # Prop firm fields
+    firm_name:          Optional[str]   = None
+    max_loss_trade:     Optional[float] = None
+    daily_max_loss:     Optional[float] = None
+    five_day_max_loss:  Optional[float] = None
+    profit_cap:         Optional[float] = None
+    challenge_target:   Optional[float] = None
 
 @router.get("")
 async def get_config(tenant_id: str = Depends(get_current_tenant)):
