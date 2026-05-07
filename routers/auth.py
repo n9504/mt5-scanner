@@ -3,6 +3,7 @@ from pydantic import BaseModel, EmailStr
 import hashlib, secrets
 from core.database import supabase_admin
 from core.auth import create_token
+from services.email import send_welcome_email
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -51,6 +52,17 @@ async def register(body: RegisterRequest):
     }).execute()
 
     token = create_token(tenant["id"])
+
+    # Send welcome email with EA + instructions
+    try:
+        send_welcome_email(
+            to      = tenant["email"],
+            name    = tenant["name"] or tenant["email"].split("@")[0],
+            api_key = tenant["api_key"],
+        )
+    except Exception as e:
+        print(f"Welcome email failed: {e}")
+
     return {
         "token":   token,
         "api_key": tenant["api_key"],
