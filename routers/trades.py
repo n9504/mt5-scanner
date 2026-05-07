@@ -8,28 +8,31 @@ from core.database import supabase_admin
 router = APIRouter(prefix="/api/v1/trades", tags=["trades"])
 
 class TradeSync(BaseModel):
-    ticket:            int
-    account_id:        str
-    signal_id:         Optional[str] = None
-    scanner:           str = "MANUAL"
-    symbol:            str
-    bias:              str
-    lot:               float
-    entry_price:       float
-    sl:                Optional[float] = None
-    tp:                Optional[float] = None
-    close_price:       Optional[float] = None
-    rr_target:         Optional[float] = None
-    rr_actual:         Optional[float] = None
-    open_time:         Optional[str]   = None
-    close_time:        Optional[str]   = None
-    gross_pnl:         Optional[float] = None
-    commission:        Optional[float] = 0
-    swap:              Optional[float] = 0
-    net_pnl:           Optional[float] = None
-    peak_progress:     Optional[float] = 0
-    execution_outcome: Optional[str]   = None
-    status:            str = "OPEN"
+    ticket:              int
+    account_id:          str
+    signal_id:           Optional[str]   = None
+    scanner:             str             = "MANUAL"
+    symbol:              str
+    bias:                str
+    lot:                 float
+    entry_price:         float
+    sl:                  Optional[float] = None
+    tp:                  Optional[float] = None
+    close_price:         Optional[float] = None
+    rr_target:           Optional[float] = None
+    rr_actual:           Optional[float] = None
+    open_time:           Optional[str]   = None
+    close_time:          Optional[str]   = None
+    gross_pnl:           Optional[float] = None
+    commission:          Optional[float] = 0
+    swap:                Optional[float] = 0
+    net_pnl:             Optional[float] = None
+    peak_progress:       Optional[float] = 0
+    execution_outcome:   Optional[str]   = None
+    status:              str             = "OPEN"
+    post_exit_high:      Optional[float] = None
+    post_exit_low:       Optional[float] = None
+    post_exit_tracked:   Optional[bool]  = None
 
 # ── EA syncs trade data (open + closed) ──
 @router.post("/sync")
@@ -72,6 +75,24 @@ async def sync_trades(
             "execution_outcome": t.execution_outcome,
             "status":            t.status,
         }
+        if t.post_exit_high is not None:   data["post_exit_high"]    = t.post_exit_high
+        if t.post_exit_low  is not None:   data["post_exit_low"]     = t.post_exit_low
+        if t.post_exit_tracked is not None: data["post_exit_tracked"] = t.post_exit_tracked
+        # Calculate exit quality if we have post-exit data
+        if t.post_exit_high and t.post_exit_low and t.close_price and t.bias:
+            if t.bias == "BUY":
+                missed = t.post_exit_high - float(t.close_price)
+                gave_back = float(t.close_price) - t.post_exit_low
+                if missed > gave_back * 2: data["exit_quality"] = "EARLY"
+                elif gave_back > missed * 2: data["exit_quality"] = "PERFECT"
+                else: data["exit_quality"] = "GOOD"
+            else:
+                missed = float(t.close_price) - t.post_exit_low
+                gave_back = t.post_exit_high - float(t.close_price)
+                if missed > gave_back * 2: data["exit_quality"] = "EARLY"
+                elif gave_back > missed * 2: data["exit_quality"] = "PERFECT"
+                else: data["exit_quality"] = "GOOD"
+        dummy = None
 
         if existing.data:
             # Only update if not already closed

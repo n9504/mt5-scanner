@@ -14,9 +14,12 @@ class JournalUpdate(BaseModel):
     tags:  Optional[List[str]] = None
 
 class ScreenshotSync(BaseModel):
-    ticket:           int
-    screenshot_entry: Optional[str] = None  # base64
-    screenshot_exit:  Optional[str] = None  # base64
+    ticket:              int
+    screenshot_entry:    Optional[str] = None  # base64 M15
+    screenshot_exit:     Optional[str] = None  # base64 M15
+    screenshot_h1_entry: Optional[str] = None  # base64 H1
+    screenshot_h1_exit:  Optional[str] = None  # base64 H1
+    timeframe:           Optional[str] = None
 
 # ── Save tags + notes ──
 @router.put("/{trade_id}/journal")
@@ -57,9 +60,10 @@ async def upload_screenshots(
         .execute()
 
     if not res.data:
-        raise HTTPException(404, f"Trade ticket {body.ticket} not found")
+        # Trade not in DB yet — sync will register it later, skip screenshot for now
+        return {"status": "trade_not_found", "ticket": body.ticket}
 
-    trade_id = res.data["id"]
+    trade_id = res.data[0]["id"] if isinstance(res.data, list) else res.data["id"]
     updates  = {}
 
     if body.screenshot_entry:
