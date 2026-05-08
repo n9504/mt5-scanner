@@ -38,6 +38,7 @@ class TradeSync(BaseModel):
 @router.post("/sync")
 async def sync_trades(
     trades:    List[TradeSync],
+    bg:        BackgroundTasks,
     tenant_id: str = Depends(get_tenant_by_api_key)
 ):
     updated = 0
@@ -75,28 +76,25 @@ async def sync_trades(
             "execution_outcome": t.execution_outcome,
             "status":            t.status,
         }
-        if t.post_exit_high is not None:   data["post_exit_high"]    = t.post_exit_high
-        if t.post_exit_low  is not None:   data["post_exit_low"]     = t.post_exit_low
+        if t.post_exit_high is not None:    data["post_exit_high"]    = t.post_exit_high
+        if t.post_exit_low  is not None:    data["post_exit_low"]     = t.post_exit_low
         if t.post_exit_tracked is not None: data["post_exit_tracked"] = t.post_exit_tracked
+
         # Calculate exit quality if we have post-exit data
         if t.post_exit_high and t.post_exit_low and t.close_price and t.bias:
             if t.bias == "BUY":
-                missed = t.post_exit_high - float(t.close_price)
+                missed    = t.post_exit_high - float(t.close_price)
                 gave_back = float(t.close_price) - t.post_exit_low
-                if missed > gave_back * 2: data["exit_quality"] = "EARLY"
-                elif gave_back > missed * 2: data["exit_quality"] = "PERFECT"
-                else: data["exit_quality"] = "GOOD"
             else:
-                missed = float(t.close_price) - t.post_exit_low
+                missed    = float(t.close_price) - t.post_exit_low
                 gave_back = t.post_exit_high - float(t.close_price)
-                if missed > gave_back * 2: data["exit_quality"] = "EARLY"
-                elif gave_back > missed * 2: data["exit_quality"] = "PERFECT"
-                else: data["exit_quality"] = "GOOD"
-        dummy = None
+            if missed > gave_back * 2:    data["exit_quality"] = "EARLY"
+            elif gave_back > missed * 2:  data["exit_quality"] = "PERFECT"
+            else:                         data["exit_quality"] = "GOOD"
 
         if existing.data:
-            # Only update if not already closed
-            if existing.data[0]["status"] != "CLOSED":
+            # Always update if incoming status is CLOSED (close beats open)
+            if t.status == "CLOSED" or existing.data[0]["status"] != "CLOSED":
                 supabase_admin.table("trades")\
                     .update(data)\
                     .eq("id", existing.data[0]["id"])\
@@ -105,8 +103,16 @@ async def sync_trades(
         else:
             supabase_admin.table("trades").insert(data).execute()
             inserted += 1
+            # Only trigger AI analysis for OPEN trades (live) not historical
+            if t.status == "OPEN":
+                bg.add_task(_trigger_entry_analysis, existing_id=None,
+                           tenant_id=tenant_id, ticket=t.ticket)
 
     return {"inserted": inserted, "updated": updated}
+
+async def _trigger_entry_analysis(existing_id, tenant_id, ticket):
+    """Placeholder - actual analysis triggered when screenshot arrives."""
+    pass
 
 # ── Dashboard reads trades ──
 @router.get("")
@@ -117,11 +123,20 @@ async def list_trades(
     period:    Optional[str] = "today",
     tenant_id: str = Depends(get_current_tenant)
 ):
+    # Exclude screenshot fields - they are large and slow down list loading
+    # Screenshots loaded separately when trade is expanded
+    FIELDS = (
+        "id,tenant_id,account_id,ticket,scanner,symbol,bias,lot,"
+        "entry_price,sl,tp,close_price,rr_target,rr_actual,open_time,close_time,"
+        "gross_pnl,commission,swap,net_pnl,execution_outcome,status,"
+        "session,tags,notes,ai_analysis,entry_analysis,exit_analysis,"
+        "post_exit_tracked,post_exit_high,post_exit_low,exit_quality,created_at"
+    )
     query = supabase_admin.table("trades")\
-        .select("*")\
+        .select(FIELDS)\
         .eq("tenant_id", tenant_id)\
         .order("open_time", desc=True)\
-        .limit(200)
+        .limit(100)
 
     if status:  query = query.eq("status", status)
     if scanner and scanner != "all": query = query.eq("scanner", scanner)
@@ -143,6 +158,17 @@ async def list_trades(
 
     res = query.execute()
     return res.data or []
+
+# ── Get screenshots for a specific trade (lazy load) ──
+@router.get("/{trade_id}/screenshots")
+async def get_screenshots(
+    trade_id:  str,
+    tenant_id: str = Depends(get_current_tenant)
+):
+    res = supabase_admin.table("trades")        .select("id,screenshot_entry,screenshot_exit,screenshot_h1_entry,screenshot_h1_exit")        .eq("id", trade_id)        .eq("tenant_id", tenant_id)        .limit(1).execute()
+    if not res.data:
+        return {}
+    return res.data[0]
 
 # ── Performance summary ──
 @router.get("/performance")
