@@ -281,42 +281,36 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
     if post_high and post_low:
         post_exit_context = f"\n60-minute post-exit range: High={post_high}, Low={post_low}, Exit quality flagged as: {exit_qual}"
 
-    content.append({"type": "text", "text": f"""
-You are a trading coach reviewing the COMPLETE trade - entry and exit.
-
-{symbol} {bias} trade:
-- Entry: {entry}, Close: {close}, SL: {sl}, TP: {tp}
-- Outcome: {outcome}, P&L: {pnl}, RR achieved: {rr}
-{post_exit_context}
-
-Analyse entry and exit charts carefully. Return ONLY valid JSON:
-{{
-  "emotion_tags": [],
-  "exit_reasoning": "",
-  "what_went_right": "",
-  "what_went_wrong": "",
-  "lesson": "",
-  "overall_analysis": "",
-  "exit_score": 0
-}}
-
-Emotion tag rules - ONLY based on observable behaviour, NOT outcome:
-- "Disciplined": price moved very little against position before moving in favour, lot size was normal, held to plan
-- "Patient": entry was at a clear structural level, not mid-move
-- "FOMO": entry was away from structure, price was already moving significantly before entry
-- "Hesitated": obvious entry signal visible but entry was late (price moved significantly before entry)
-- "Overconfident": lot size appears unusually large relative to the setup quality
-- Only include tags you can genuinely observe from the charts (max 2)
-
-Other fields:
-- exit_reasoning: why was the trade closed here? at structure? hit TP/SL? manual?
-- what_went_right: specific observation from charts
-- what_went_wrong: specific observation or "Nothing significant"
-- lesson: single actionable lesson from this trade
-- overall_analysis: 2-3 sentences combining entry and exit quality
-- exit_score: 1-10 how good was the exit timing
-- JSON only, no markdown
-"""})
+    content.append({"type": "text", "text": (
+        f"You are a trading coach reviewing a {symbol} {bias} trade.\n\n"
+        f"TRADE NUMBERS:\n"
+        f"Entry: {entry}, Close: {close}, Planned SL: {sl}, Planned TP: {tp}\n"
+        f"Outcome: {outcome}, P&L: {pnl}, RR achieved: {rr}\n"
+        f"{post_exit_context}\n\n"
+        "You have M15 and H1 charts for both entry and exit. Be SPECIFIC with price levels.\n"
+        "Return ONLY valid JSON:\n\n"
+        "{\n"
+        '  \"emotion_tags\": [],\n'
+        '  \"exit_reasoning\": \"\",\n'
+        '  \"what_went_right\": \"\",\n'
+        '  \"what_went_wrong\": \"\",\n'
+        '  \"lesson\": \"\",\n'
+        '  \"overall_analysis\": \"\",\n'
+        '  \"exit_score\": 0\n'
+        "}\n\n"
+        "emotion_tags (max 2, from charts only, not outcome):\n"
+        "- Patient: entry at key H1/M15 structure level\n"
+        "- FOMO: entry mid-move away from structure\n"
+        "- Hesitated: late entry, signal was visible earlier\n"
+        "- Overconfident: no clear structure at entry\n\n"
+        f"exit_reasoning: Reference actual prices e.g. closed at {close}, TP was {tp}\n"
+        f"what_went_right: Specific observation with price e.g. entry at {entry} aligned with FVG\n"
+        "what_went_wrong: Specific observation, or 'Trade followed plan' if WIN_TP\n"
+        "lesson: One actionable lesson with price reference\n"
+        f"overall_analysis: 2 sentences. 1: entry quality at {entry}. 2: exit at {close} vs plan TP={tp} SL={sl}\n"
+        "exit_score: 10=hit TP exactly, 7-9=profitable near TP, 4-6=early profit, 1-3=loss\n\n"
+        "JSON only, no markdown"
+    )})
 
     try:
         client = ant.Anthropic(api_key=api_key)
