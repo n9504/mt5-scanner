@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, signals, trades, account, bias, config, journal, insights, news, alerts, setup, news, insights
+from routers import auth, signals, trades, account, bias, config, journal, insights, news, alerts, setup
 
 app = FastAPI(title="TradePattrnly API", version="2.0.0")
 
@@ -23,9 +23,6 @@ app.include_router(insights.router)
 app.include_router(news.router)
 app.include_router(alerts.router)
 app.include_router(setup.router)
-app.include_router(news.router)
-app.include_router(alerts.router)
-app.include_router(insights.router)
 
 @app.get("/")
 async def root(): return {"status": "ok", "version": "2.0.0"}
