@@ -32,6 +32,8 @@ class TradeSync(BaseModel):
     post_exit_high:      Optional[float] = None
     post_exit_low:       Optional[float] = None
     post_exit_tracked:   Optional[bool]  = None
+    tick_value:          Optional[float] = None
+    tick_size:           Optional[float] = None
 
 # ── EA syncs trade data (open + closed) ──
 @router.post("/sync")
