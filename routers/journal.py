@@ -95,13 +95,75 @@ def _get_images(trade: dict, fields: list) -> list:
     return images
 
 
+# Daily AI analysis limits per tier
+TIER_AI_LIMITS = {
+    "journal":  0,
+    "starter":  10,
+    "growth":   25,
+    "pro":      50,
+    "elite":    100,
+    "beta":     5,
+    "free":     0,
+}
+
+def _get_daily_ai_count(tenant_id: str) -> tuple:
+    """Returns (count_today, tier_limit, subscription)."""
+    from datetime import date, datetime
+    today = str(date.today())
+    t_res = supabase_admin.table("tenants")\
+        .select("subscription,is_beta,beta_expires_at,ai_analysis_count_today,ai_analysis_date")\
+        .eq("id", tenant_id).limit(1).execute()
+    if not t_res.data: return 0, 0, "free"
+    t = t_res.data[0]
+
+    sub = t.get("subscription","free")
+    if t.get("is_beta") and t.get("beta_expires_at"):
+        try:
+            expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
+            if datetime.utcnow() <= expires:
+                sub = "beta"
+        except: pass
+
+    limit = TIER_AI_LIMITS.get(sub, 0)
+    stored_date = t.get("ai_analysis_date","")
+    count = int(t.get("ai_analysis_count_today") or 0)
+    if stored_date != today:
+        count = 0
+        supabase_admin.table("tenants").update({
+            "ai_analysis_count_today": 0,
+            "ai_analysis_date": today,
+        }).eq("id", tenant_id).execute()
+
+    return count, limit, sub
+
+def _increment_daily_ai_count(tenant_id: str, current_count: int):
+    from datetime import date
+    supabase_admin.table("tenants").update({
+        "ai_analysis_count_today": current_count + 1,
+        "ai_analysis_date": str(date.today()),
+    }).eq("id", tenant_id).execute()
+
+
 def run_entry_analysis(trade_id: str, tenant_id: str):
     """
     Runs when entry screenshots arrive.
-    Analyses: setup quality, setup tags, TP/SL probability, entry score.
-    Also adds session tag automatically.
-    Does NOT tag emotion from outcome.
+    Screenshots always stored. AI analysis runs only within daily tier limit.
     """
+    # Check daily AI analysis limit first
+    count_today, limit, sub = _get_daily_ai_count(tenant_id)
+    if limit == 0:
+        supabase_admin.table("trades").update({
+            "entry_analysis": '{"skipped":true,"reason":"AI analysis not included in current plan. Upgrade to access entry scoring."}'
+        }).eq("id", trade_id).execute()
+        print(f"[Entry Analysis] Skipped — {sub} plan has no AI analysis")
+        return
+    if count_today >= limit:
+        supabase_admin.table("trades").update({
+            "entry_analysis": f'{{"skipped":true,"reason":"Daily AI analysis limit reached ({count_today}/{limit}). Screenshots saved. Resets tomorrow."}}'
+        }).eq("id", trade_id).execute()
+        print(f"[Entry Analysis] Daily limit reached: {count_today}/{limit}")
+        return
+
     import anthropic as ant
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key: return

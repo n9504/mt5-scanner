@@ -12,23 +12,48 @@ def _is_admin(tenant_id: str) -> bool:
     res = supabase_admin.table("tenants").select("email").eq("id", tenant_id).limit(1).execute()
     return res.data and res.data[0].get("email") == ADMIN_EMAIL
 
-def _can_run(tenant_id: str):
-    res = supabase_admin.table("tenants").select("email,subscription,analysis_count_week,analysis_week_reset")\
+def _can_run(tenant_id: str, is_auto: bool = False):
+    res = supabase_admin.table("tenants")\
+        .select("email,subscription,analysis_count_week,analysis_week_reset,is_beta,beta_expires_at")\
         .eq("id", tenant_id).limit(1).execute()
     if not res.data: return False, "Not found"
     t = res.data[0]
     if t.get("email") == ADMIN_EMAIL: return True, ""
-    if t.get("subscription","free") == "free": return False, "Available on Pro plan"
-    reset = t.get("analysis_week_reset"); count = int(t.get("analysis_count_week") or 0)
+
+    # Check beta or paid subscription
+    subscription = t.get("subscription","free")
+    is_beta = t.get("is_beta", False)
+    if is_beta and t.get("beta_expires_at"):
+        try:
+            expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
+            if datetime.utcnow() > expires:
+                is_beta = False
+                subscription = "free"
+        except: pass
+
+    if subscription == "free" and not is_beta:
+        return False, "Available on paid plans"
+
+    # Weekly limit — reset if new week
+    reset = t.get("analysis_week_reset")
+    count = int(t.get("analysis_count_week") or 0)
     if reset:
         try:
             rdt = datetime.fromisoformat(str(reset).replace("Z","").replace("+00:00",""))
             if datetime.utcnow() - rdt > timedelta(days=7):
-                supabase_admin.table("tenants").update({"analysis_count_week":0,"analysis_week_reset":datetime.utcnow().isoformat()}).eq("id",tenant_id).execute()
+                supabase_admin.table("tenants").update({
+                    "analysis_count_week": 0,
+                    "analysis_week_reset": datetime.utcnow().isoformat()
+                }).eq("id", tenant_id).execute()
                 count = 0
         except: pass
-    if count >= 1: return False, "Weekly analysis already run"
+
+    # Auto Sunday: runs if not already run this week
+    # Manual: once per week max
+    if count >= 1:
+        return False, "Weekly analysis already run — resets Sunday"
     return True, ""
+
 
 def _compute_behavioural_scores(trades: list) -> dict:
     """Compute behavioural scorecard from trade data."""
