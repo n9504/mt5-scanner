@@ -117,7 +117,15 @@ def _get_daily_ai_count(tenant_id: str) -> tuple:
     t = t_res.data[0]
 
     sub = t.get("subscription","free")
+    # Check beta status
     if t.get("is_beta") and t.get("beta_expires_at"):
+        try:
+            expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
+            if datetime.utcnow() <= expires:
+                sub = "beta"
+        except: pass
+    # If no is_beta flag but has beta_expires_at set, still treat as beta
+    elif t.get("beta_expires_at") and not t.get("is_beta"):
         try:
             expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
             if datetime.utcnow() <= expires:
@@ -269,7 +277,10 @@ market_condition_tags: max 2, MARKET STATE: ["Trending","Range","Breakout","Reve
 session_tag is auto-computed from time — do not include in tags
 trendline_touches: count of visible trendline touches (0 if none)
 trendline_type: "ascending"/"descending"/"horizontal"/""
-structural_observation: describe ONLY what is structurally visible on the chart — zones, levels, patterns. NO trading guidance, NO "watch for", NO "if price does X". Pure structural description.
+structural_observation: describe ONLY what objectively occurred on the chart. Use post-trade observational language.
+GOOD: "price moved above prior range", "horizontal level visible", "price expanded above consolidation highs"  
+AVOID: "bullish momentum", "buy levels", "bearish signal", "expect", "should", "indicates continuation"
+Describe what happened structurally. No predictions. No trading guidance.
 key_zone: the most significant price zone visible on the chart
 news_risk: true if high impact news within 15min of entry
 computed_tag: "Calm" if score>=7 AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "" otherwise
