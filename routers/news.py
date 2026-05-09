@@ -72,6 +72,16 @@ async def get_today_news(
         .order("event_time").execute()
     return res.data or []
 
+@router.post("/news/fetch")
+async def force_fetch_news(tenant_id: str = Depends(get_current_tenant)):
+    """Force fetch today's news - call this to populate news_events table."""
+    today = str(date.today())
+    supabase_admin.table("news_events").delete().eq("event_date", today).execute()
+    await fetch_and_cache_news()
+    res = supabase_admin.table("news_events").select("*")\
+        .eq("event_date", today).order("event_time").execute()
+    return {"fetched": len(res.data or []), "events": res.data or []}
+
 class AlertCreate(BaseModel):
     account_id: str
     type: str
