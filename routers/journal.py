@@ -236,69 +236,38 @@ JSON only, no markdown
         existing = trade.get("tags") or []
         merged   = list(set(existing + all_tags))
 
-        # Calculate simulated balances from all open trades
-        # Use actual RR and historical avg P&L per pip for accuracy
+        # Calculate simulated balances using actual tick_value from broker
         sim_tp_pnl = 0.0; sim_sl_pnl = 0.0
         open_trades = []
         try:
             open_res = supabase_admin.table("trades").select(
-                "entry_price,sl,tp,lot,bias,symbol,gross_pnl,net_pnl,close_price"
+                "entry_price,sl,tp,lot,bias,symbol,tick_value,tick_size"
             ).eq("tenant_id", tenant_id).eq("status","OPEN").execute()
             open_trades = open_res.data or []
             for ot in open_trades:
-                e    = float(ot.get("entry_price") or 0)
-                sl   = float(ot.get("sl") or 0)
-                tp   = float(ot.get("tp") or 0)
-                lot  = float(ot.get("lot") or 0)
-                bias = ot.get("bias","BUY")
-                sym  = ot.get("symbol","")
-                if not (e and sl and tp and lot): continue
+                e          = float(ot.get("entry_price") or 0)
+                sl_p       = float(ot.get("sl") or 0)
+                tp_p       = float(ot.get("tp") or 0)
+                lot        = float(ot.get("lot") or 0)
+                bias       = ot.get("bias","BUY")
+                tick_val   = float(ot.get("tick_value") or 0)
+                tick_sz    = float(ot.get("tick_size") or 0)
+                if not (e and sl_p and tp_p and lot): continue
+                if not (tick_val and tick_sz): continue  # need tick data from MT5
 
-                # Determine pip size by symbol
-                if "JPY" in sym:            pip = 0.01
-                elif sym in ["XAUUSD"]:     pip = 0.1
-                elif sym in ["XAGUSD"]:     pip = 0.01
-                elif sym in ["BTCUSD","ETHUSD"]: pip = 1.0
-                elif sym in ["US30","NAS100","GER40","UK100"]: pip = 1.0
-                else:                       pip = 0.0001
-
-                # Calculate distance in price units
+                # P&L = (price_distance / tick_size) * tick_value * lot
                 if bias == "BUY":
-                    tp_dist = tp - e
-                    sl_dist = e - sl
+                    tp_dist = tp_p - e
+                    sl_dist = sl_p - e  # negative for buy
                 else:
-                    tp_dist = e - tp
-                    sl_dist = sl - e
+                    tp_dist = e - tp_p
+                    sl_dist = e - sl_p  # positive for sell going down
 
-                # Use historical avg $/pip from closed trades for this symbol
-                hist = supabase_admin.table("trades").select("net_pnl,entry_price,close_price,lot")                    .eq("tenant_id", tenant_id).eq("symbol", sym)                    .eq("status","CLOSED").limit(20).execute()
-                hist_trades = hist.data or []
+                tp_pnl = (tp_dist / tick_sz) * tick_val * lot
+                sl_pnl = (sl_dist / tick_sz) * tick_val * lot
 
-                if hist_trades and len(hist_trades) >= 3:
-                    # Calculate avg $/pip from history
-                    pip_values = []
-                    for ht in hist_trades:
-                        hp = float(ht.get("net_pnl") or 0)
-                        he = float(ht.get("entry_price") or 0)
-                        hc = float(ht.get("close_price") or 0)
-                        hl = float(ht.get("lot") or 0)
-                        if he and hc and hl and abs(he-hc) > pip:
-                            pips = abs(he-hc)/pip
-                            pip_val = abs(hp)/(pips*hl) if pips*hl > 0 else 0
-                            if 0 < pip_val < 1000:
-                                pip_values.append(pip_val)
-                    if pip_values:
-                        avg_pip_val = sum(pip_values)/len(pip_values)
-                        tp_pips = tp_dist/pip
-                        sl_pips = sl_dist/pip
-                        sim_tp_pnl += tp_pips * avg_pip_val * lot
-                        sim_sl_pnl -= sl_pips * avg_pip_val * lot
-                        continue
-
-                # Fallback: standard pip values
-                pip_usd = 10.0 if pip == 0.0001 else (1000.0 if pip == 0.01 else (1.0 if pip >= 0.1 else 10.0))
-                sim_tp_pnl += (tp_dist/pip) * pip_usd * lot
-                sim_sl_pnl -= (sl_dist/pip) * pip_usd * lot
+                sim_tp_pnl += tp_pnl
+                sim_sl_pnl += sl_pnl
 
         except Exception as se:
             print(f"[Sim balance error] {se}")

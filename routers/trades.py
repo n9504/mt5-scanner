@@ -79,6 +79,8 @@ async def sync_trades(
         if t.post_exit_high is not None:    data["post_exit_high"]    = t.post_exit_high
         if t.post_exit_low  is not None:    data["post_exit_low"]     = t.post_exit_low
         if t.post_exit_tracked is not None: data["post_exit_tracked"] = t.post_exit_tracked
+        if t.tick_value is not None:        data["tick_value"]        = t.tick_value
+        if t.tick_size  is not None:        data["tick_size"]         = t.tick_size
 
         # Calculate exit quality if we have post-exit data
         if t.post_exit_high and t.post_exit_low and t.close_price and t.bias:
@@ -130,7 +132,7 @@ async def list_trades(
         "entry_price,sl,tp,close_price,rr_target,rr_actual,open_time,close_time,"
         "gross_pnl,commission,swap,net_pnl,execution_outcome,status,"
         "session,tags,notes,ai_analysis,entry_analysis,exit_analysis,"
-        "post_exit_tracked,post_exit_high,post_exit_low,exit_quality,created_at"
+        "post_exit_tracked,post_exit_high,post_exit_low,exit_quality,tick_value,tick_size,created_at"
     )
     # No limit for all-time, 200 for filtered periods
     row_limit = 2000 if period == "all" else 200
