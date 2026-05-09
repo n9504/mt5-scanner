@@ -132,11 +132,13 @@ async def list_trades(
         "session,tags,notes,ai_analysis,entry_analysis,exit_analysis,"
         "post_exit_tracked,post_exit_high,post_exit_low,exit_quality,created_at"
     )
+    # No limit for all-time, 200 for filtered periods
+    row_limit = 2000 if period == "all" else 200
     query = supabase_admin.table("trades")\
         .select(FIELDS)\
         .eq("tenant_id", tenant_id)\
         .order("open_time", desc=True)\
-        .limit(100)
+        .limit(row_limit)
 
     if status:  query = query.eq("status", status)
     if scanner and scanner != "all": query = query.eq("scanner", scanner)
