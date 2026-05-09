@@ -191,6 +191,7 @@ Analyse the chart and return ONLY valid JSON. You are a behavioural analyst — 
 
 {{
   "setup_tags": [],
+  "market_condition_tags": [],
   "trendline_touches": 0,
   "trendline_type": "",
   "entry_score": 5,
@@ -205,7 +206,9 @@ SCORING RULES (start at 5):
 +1 each: clear BOS/CHoCH visible, trendline 3+ touches, RR>2, entry at key structure level, FVG or OB clearly visible
 -1 each: entry mid-move with no structure, news risk within 15min, no clear confluence visible
 
-setup_tags: max 4, only what clearly visible: ["FVG","OB","BOS","CHoCH","Support","Resistance","Trendline Touch","Trendline Break","Range","Trend Continuation","Reversal Attempt"]
+setup_tags: max 3, SETUP only (what structure at entry): ["FVG","OB","BOS","CHoCH","Support","Resistance","Trendline Touch","Trendline Break"]
+market_condition_tags: max 2, MARKET STATE: ["Trending","Range","Breakout","Reversal","High Volatility","Low Volatility","News Driven"]
+session_tag is auto-computed from time — do not include in tags
 trendline_touches: count of visible trendline touches (0 if none)
 trendline_type: "ascending"/"descending"/"horizontal"/""
 structural_observation: describe ONLY what is structurally visible on the chart — zones, levels, patterns. NO trading guidance, NO "watch for", NO "if price does X". Pure structural description.
