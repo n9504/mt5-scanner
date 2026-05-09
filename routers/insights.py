@@ -278,16 +278,25 @@ Return ONLY valid JSON:
   "behaviour_contradictions": ["Any gap between assumed vs actual patterns — e.g. you trade X but profit from Y"],
   "what_improved": ["Improvements vs older baseline with specific metrics"],
   "drift_alerts": ["Any concerning recent behaviour shifts"],
-  "year_end_projection": {projected or 0},
-  "year_end_narrative": "1 sentence about trajectory based on current behaviour pattern",
-  "top_focus": "Single most important behavioural pattern to address — phrased as observation not instruction"
+  "performance_trend_projection": {projected or 0},
+  "performance_trend_narrative": "1 sentence about current trajectory — frame constructively even if negative. Use: current patterns suggest... rather than you will lose...",
+  "weekly_focus": "One specific, measurable behavioural observation for this week. Frame as: Your data suggests results may improve when... Reference specific metric.",
+  "top_3_improvements": [
+    "Three specific behavioural observations with data evidence. Format: Observed: [pattern]. Historical data suggests: [what it means]."
+  ],
+  "top_focus": "Single most important behavioural pattern to address — coach-like, constructive, data-backed"
 }}
 
-Rules:
-- All observations are backward-looking behavioural analysis
-- Never say 'you should trade X' or predict market movement  
-- Reference actual numbers from the data
-- Use language: 'observed', 'detected', 'historical tendency', 'behavioural pattern'
+TONE RULES — CRITICAL:
+- Write like a professional performance coach — intelligent, warm, analytical
+- NEVER use absolute negative language: "zero", "complete absence", "total failure", "catastrophic"
+- NEVER be harsh, judgmental or fatalistic
+- ALWAYS frame observations constructively: "patterns suggest opportunity to improve..." not "you always fail at..."
+- Use: "historically", "observed tendency", "data suggests", "patterns indicate", "execution tendency", "results may improve when"
+- Avoid: "should", "must", "guaranteed", "definitely", "never", "always" (absolute terms)
+- Weaknesses → frame as "areas where historical data shows room for growth"
+- Contradictions → frame as "interesting pattern worth exploring"
+- Bad streaks → frame as "periods where behavioural patterns shifted"
 - JSON only, no markdown"""
 
     try:
@@ -310,7 +319,7 @@ Rules:
             "tenant_id":   tenant_id,
             "account_id":  account_id,
             "analysis":    json.dumps(result),
-            "year_end_pnl":projected,
+            "year_end_pnl":projected,  # kept for DB compatibility
             "trade_count": len(trades),
         }).execute()
 
