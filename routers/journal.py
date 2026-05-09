@@ -262,9 +262,7 @@ Analyse the chart and return ONLY valid JSON. You are a behavioural analyst — 
   "computed_tag": ""
 }}
 
-SCORING RULES (start at 5):
-+1 each: clear BOS/CHoCH visible, trendline 3+ touches, RR>2, entry at key structure level, FVG or OB clearly visible
--1 each: entry mid-move with no structure, news risk within 15min, no clear confluence visible
+
 
 setup_tags: max 3, SETUP only (what structure at entry): ["FVG","OB","BOS","CHoCH","Support","Resistance","Trendline Touch","Trendline Break"]
 market_condition_tags: max 2, MARKET STATE: ["Trending","Range","Breakout","Reversal","High Volatility","Low Volatility","News Driven"]
@@ -273,7 +271,6 @@ trendline_touches: count of visible trendline touches (0 if none)
 trendline_type: "ascending"/"descending"/"horizontal"/""
 structural_observation: describe ONLY what is structurally visible on the chart — zones, levels, patterns. NO trading guidance, NO "watch for", NO "if price does X". Pure structural description.
 key_zone: the most significant price zone visible on the chart
-entry_quality: "Excellent"(8-10),"Good"(6-7),"Average"(4-5),"Poor"(1-3)
 news_risk: true if high impact news within 15min of entry
 computed_tag: "Calm" if score>=7 AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "" otherwise
 JSON only, no markdown
