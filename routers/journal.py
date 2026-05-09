@@ -187,33 +187,32 @@ TRADE DATA:
 
 Analyse M15 (entry timing) and H1 (structure) charts carefully. Look specifically for trendlines.
 
-Return ONLY valid JSON:
+Analyse the chart and return ONLY valid JSON. You are a behavioural analyst — describe what you observe structurally. Do NOT give trading direction or guidance.
+
 {{
   "setup_tags": [],
   "trendline_touches": 0,
   "trendline_type": "",
   "entry_score": 5,
-  "tp_probability": 50,
-  "sl_probability": 50,
-  "entry_reasoning": "",
-  "key_level": "",
-  "watch_for": "",
+  "structural_observation": "",
+  "key_zone": "",
   "entry_quality": "Average",
   "news_risk": false,
-  "bias_aligned": true,
   "computed_tag": ""
 }}
 
 SCORING RULES (start at 5):
-+1 each: clear BOS/CHoCH visible, trendline with 3+ touches, bias aligned with weekly trend, RR>2, entry at key structure level, FVG or OB clearly visible
--1 each: entry mid-move with no structure, counter-trend to H1, news risk within 15min, no clear confluence visible, entry away from any level
++1 each: clear BOS/CHoCH visible, trendline 3+ touches, RR>2, entry at key structure level, FVG or OB clearly visible
+-1 each: entry mid-move with no structure, news risk within 15min, no clear confluence visible
 
-setup_tags: max 4, only what clearly visible: ["FVG","OB","BOS","CHoCH","Support","Resistance","Breakout","Range","Trend","Reversal","Trendline Touch","Trendline Break"]
-trendline_touches: count of price touches on visible trendline (0 if none)
-trendline_type: "ascending"/"descending"/"horizontal"/"" 
-tp_probability + sl_probability should sum to ~100
+setup_tags: max 4, only what clearly visible: ["FVG","OB","BOS","CHoCH","Support","Resistance","Trendline Touch","Trendline Break","Range","Trend Continuation","Reversal Attempt"]
+trendline_touches: count of visible trendline touches (0 if none)
+trendline_type: "ascending"/"descending"/"horizontal"/""
+structural_observation: describe ONLY what is structurally visible on the chart — zones, levels, patterns. NO trading guidance, NO "watch for", NO "if price does X". Pure structural description.
+key_zone: the most significant price zone visible on the chart
 entry_quality: "Excellent"(8-10),"Good"(6-7),"Average"(4-5),"Poor"(1-3)
-computed_tag: "Calm" if score>=7 AND bias_aligned AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "Counter-trend" if not bias_aligned | "" otherwise
+news_risk: true if high impact news within 15min of entry
+computed_tag: "Calm" if score>=7 AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "" otherwise
 JSON only, no markdown
 """})
 
