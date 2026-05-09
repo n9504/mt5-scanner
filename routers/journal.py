@@ -137,45 +137,90 @@ def run_entry_analysis(trade_id: str, tenant_id: str):
         })
         content.append({"type": "text", "text": img["label"]})
 
+    # Get news events near entry time
+    news_context = ""
+    try:
+        from datetime import datetime as dt2, timedelta as td2
+        entry_dt = dt2.fromisoformat(str(trade.get("open_time","")).replace("Z","").replace("+00:00",""))
+        entry_date = entry_dt.strftime("%Y-%m-%d")
+        win_start  = (entry_dt - td2(minutes=15)).strftime("%H:%M")
+        win_end    = (entry_dt + td2(minutes=15)).strftime("%H:%M")
+        sym_up = symbol.upper()
+        currencies = ([sym_up[:3], sym_up[3:6]] if len(sym_up) >= 6 else
+                      ["USD"] if any(x in sym_up for x in ["XAU","NAS","US30","GER"]) else [])
+        if currencies:
+            nr = supabase_admin.table("news_events").select("title,currency,event_time")\
+                .eq("event_date", entry_date).eq("impact","High")\
+                .in_("currency", currencies).execute()
+            nearby = [n for n in (nr.data or []) if n.get("event_time","") and win_start <= n["event_time"] <= win_end]
+            if nearby:
+                news_context = "HIGH IMPACT NEWS within 15min: " + ", ".join(
+                    [f"{n['currency']} {n['title']} at {n['event_time']}" for n in nearby])
+    except Exception: pass
+
+    # Get weekly bias alignment
+    bias_context = ""
+    bias_aligned = True
+    try:
+        br = supabase_admin.table("scanner_bias").select("bias,condition")\
+            .eq("symbol", symbol).eq("scanner","S3")\
+            .order("recorded_at", desc=True).limit(1).execute()
+        if br.data:
+            s3 = br.data[0].get("bias","NEUTRAL")
+            bias_aligned = (s3 == bias or s3 == "NEUTRAL")
+            bias_context = f"Weekly S3 bias: {s3}. Trade is {'ALIGNED with' if bias_aligned else 'COUNTER to'} weekly trend."
+    except Exception: pass
+
+    # Pip calculation
+    pip = 0.01 if "JPY" in symbol else (0.1 if "XAU" in symbol else (1.0 if any(x in symbol for x in ["BTC","ETH","US30","NAS","GER"]) else 0.0001))
+    sl_pips = round(abs(float(entry)-float(sl))/pip, 1) if sl and entry else "?"
+    rr_val  = rr if rr else "?"
+
     content.append({"type": "text", "text": f"""
 You are a professional trading analyst reviewing the ENTRY of a {symbol} {bias} trade.
 
-Trade details:
-- Entry: {entry}
-- Stop Loss: {sl}
-- Take Profit: {tp}
-- Risk/Reward: {rr}R
+TRADE DATA:
+- Entry: {entry} | SL: {sl} ({sl_pips} pips) | TP: {tp} | RR: {rr_val}R
+- Session: {_get_session_tag(trade.get("open_time",""))}
+{f"- {bias_context}" if bias_context else ""}
+{f"- WARNING: {news_context}" if news_context else ""}
 
-Analyse the M15 and H1 charts and return ONLY valid JSON:
+Analyse M15 (entry timing) and H1 (structure) charts carefully. Look specifically for trendlines.
+
+Return ONLY valid JSON:
 {{
   "setup_tags": [],
-  "entry_score": 0,
-  "tp_probability": 0,
-  "sl_probability": 0,
+  "trendline_touches": 0,
+  "trendline_type": "",
+  "entry_score": 5,
+  "tp_probability": 50,
+  "sl_probability": 50,
   "entry_reasoning": "",
   "key_level": "",
   "watch_for": "",
-  "entry_quality": ""
+  "entry_quality": "Average",
+  "news_risk": false,
+  "bias_aligned": true,
+  "computed_tag": ""
 }}
 
-Rules:
-- setup_tags: ONLY from this list, ONLY what you can actually see in the charts (max 3):
-  ["FVG", "OB", "BOS", "CHoCH", "Support", "Resistance", "Breakout", "Range", "Trend", "Reversal"]
-- entry_score: 1-10 quality of this entry based on confluence, structure, timing
-- tp_probability: 0-100 percentage chance of TP being hit based on chart structure
-- sl_probability: 0-100 percentage chance of SL being hit (tp + sl probabilities should add to ~100)
-- entry_reasoning: 1-2 sentences describing WHY this entry makes sense structurally
-- key_level: the most important price level to watch right now
-- watch_for: what price action would confirm or invalidate this trade
-- entry_quality: one of "Excellent", "Good", "Average", "Poor"
-- DO NOT tag emotions at entry - only behaviour can determine that
-- JSON only, no markdown
+SCORING RULES (start at 5):
++1 each: clear BOS/CHoCH visible, trendline with 3+ touches, bias aligned with weekly trend, RR>2, entry at key structure level, FVG or OB clearly visible
+-1 each: entry mid-move with no structure, counter-trend to H1, news risk within 15min, no clear confluence visible, entry away from any level
+
+setup_tags: max 4, only what clearly visible: ["FVG","OB","BOS","CHoCH","Support","Resistance","Breakout","Range","Trend","Reversal","Trendline Touch","Trendline Break"]
+trendline_touches: count of price touches on visible trendline (0 if none)
+trendline_type: "ascending"/"descending"/"horizontal"/"" 
+tp_probability + sl_probability should sum to ~100
+entry_quality: "Excellent"(8-10),"Good"(6-7),"Average"(4-5),"Poor"(1-3)
+computed_tag: "Calm" if score>=7 AND bias_aligned AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "Counter-trend" if not bias_aligned | "" otherwise
+JSON only, no markdown
 """})
 
     try:
         client = ant.Anthropic(api_key=api_key)
         resp   = client.messages.create(
-            model="claude-sonnet-4-5", max_tokens=600,
+            model="claude-sonnet-4-5", max_tokens=700,
             messages=[{"role": "user", "content": content}]
         )
         text   = resp.content[0].text.strip().replace("```json","").replace("```","").strip()
@@ -192,28 +237,69 @@ Rules:
         merged   = list(set(existing + all_tags))
 
         # Calculate simulated balances from all open trades
+        # Use actual RR and historical avg P&L per pip for accuracy
         sim_tp_pnl = 0.0; sim_sl_pnl = 0.0
+        open_trades = []
         try:
             open_res = supabase_admin.table("trades").select(
-                "entry_price,sl,tp,lot,bias,symbol"
+                "entry_price,sl,tp,lot,bias,symbol,gross_pnl,net_pnl,close_price"
             ).eq("tenant_id", tenant_id).eq("status","OPEN").execute()
             open_trades = open_res.data or []
             for ot in open_trades:
-                e = float(ot.get("entry_price") or 0)
-                s = float(ot.get("sl") or 0)
-                t_price = float(ot.get("tp") or 0)
-                lot_size = float(ot.get("lot") or 0)
-                b = ot.get("bias","BUY")
-                sym = ot.get("symbol","")
-                # Pip value approximation
-                pip_val = 10 if "JPY" not in sym and sym not in ["XAUUSD","BTCUSD","ETHUSD","US30","NAS100","GER40"] else 1
-                if t_price and s and e and lot_size:
-                    if b == "BUY":
-                        sim_tp_pnl += (t_price - e) * lot_size * pip_val * 10000 if "JPY" not in sym else (t_price - e) * lot_size * pip_val * 100
-                        sim_sl_pnl += (s - e) * lot_size * pip_val * 10000 if "JPY" not in sym else (s - e) * lot_size * pip_val * 100
-                    else:
-                        sim_tp_pnl += (e - t_price) * lot_size * pip_val * 10000 if "JPY" not in sym else (e - t_price) * lot_size * pip_val * 100
-                        sim_sl_pnl += (e - s) * lot_size * pip_val * 10000 if "JPY" not in sym else (e - s) * lot_size * pip_val * 100
+                e    = float(ot.get("entry_price") or 0)
+                sl   = float(ot.get("sl") or 0)
+                tp   = float(ot.get("tp") or 0)
+                lot  = float(ot.get("lot") or 0)
+                bias = ot.get("bias","BUY")
+                sym  = ot.get("symbol","")
+                if not (e and sl and tp and lot): continue
+
+                # Determine pip size by symbol
+                if "JPY" in sym:            pip = 0.01
+                elif sym in ["XAUUSD"]:     pip = 0.1
+                elif sym in ["XAGUSD"]:     pip = 0.01
+                elif sym in ["BTCUSD","ETHUSD"]: pip = 1.0
+                elif sym in ["US30","NAS100","GER40","UK100"]: pip = 1.0
+                else:                       pip = 0.0001
+
+                # Calculate distance in price units
+                if bias == "BUY":
+                    tp_dist = tp - e
+                    sl_dist = e - sl
+                else:
+                    tp_dist = e - tp
+                    sl_dist = sl - e
+
+                # Use historical avg $/pip from closed trades for this symbol
+                hist = supabase_admin.table("trades").select("net_pnl,entry_price,close_price,lot")                    .eq("tenant_id", tenant_id).eq("symbol", sym)                    .eq("status","CLOSED").limit(20).execute()
+                hist_trades = hist.data or []
+
+                if hist_trades and len(hist_trades) >= 3:
+                    # Calculate avg $/pip from history
+                    pip_values = []
+                    for ht in hist_trades:
+                        hp = float(ht.get("net_pnl") or 0)
+                        he = float(ht.get("entry_price") or 0)
+                        hc = float(ht.get("close_price") or 0)
+                        hl = float(ht.get("lot") or 0)
+                        if he and hc and hl and abs(he-hc) > pip:
+                            pips = abs(he-hc)/pip
+                            pip_val = abs(hp)/(pips*hl) if pips*hl > 0 else 0
+                            if 0 < pip_val < 1000:
+                                pip_values.append(pip_val)
+                    if pip_values:
+                        avg_pip_val = sum(pip_values)/len(pip_values)
+                        tp_pips = tp_dist/pip
+                        sl_pips = sl_dist/pip
+                        sim_tp_pnl += tp_pips * avg_pip_val * lot
+                        sim_sl_pnl -= sl_pips * avg_pip_val * lot
+                        continue
+
+                # Fallback: standard pip values
+                pip_usd = 10.0 if pip == 0.0001 else (1000.0 if pip == 0.01 else (1.0 if pip >= 0.1 else 10.0))
+                sim_tp_pnl += (tp_dist/pip) * pip_usd * lot
+                sim_sl_pnl -= (sl_dist/pip) * pip_usd * lot
+
         except Exception as se:
             print(f"[Sim balance error] {se}")
 

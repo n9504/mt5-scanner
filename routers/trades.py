@@ -167,17 +167,6 @@ async def delete_all_trades(tenant_id: str = Depends(get_current_tenant)):
     supabase_admin.table("trades").delete().eq("tenant_id", tenant_id).execute()
     return {"status": "ok", "message": "All trades deleted"}
 
-# ── Get screenshots for a specific trade (lazy load) ──
-@router.get("/{trade_id}/screenshots")
-async def get_screenshots(
-    trade_id:  str,
-    tenant_id: str = Depends(get_current_tenant)
-):
-    res = supabase_admin.table("trades")        .select("id,screenshot_entry,screenshot_exit,screenshot_h1_entry,screenshot_h1_exit")        .eq("id", trade_id)        .eq("tenant_id", tenant_id)        .limit(1).execute()
-    if not res.data:
-        return {}
-    return res.data[0]
-
 # ── Performance summary ──
 @router.get("/performance")
 async def performance(
@@ -206,3 +195,18 @@ async def performance(
         },
         "trades": trades,
     }
+
+# ── Get screenshots for a specific trade (lazy load) ──
+@router.get("/{trade_id}/screenshots")
+async def get_screenshots(
+    trade_id:  str,
+    tenant_id: str = Depends(get_current_tenant)
+):
+    res = supabase_admin.table("trades")\
+        .select("id,screenshot_entry,screenshot_exit,screenshot_h1_entry,screenshot_h1_exit")\
+        .eq("id", trade_id)\
+        .eq("tenant_id", tenant_id)\
+        .limit(1).execute()
+    if not res.data:
+        return {}
+    return res.data[0]

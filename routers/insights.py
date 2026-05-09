@@ -106,6 +106,29 @@ async def run_insights(account_id: str, background_tasks: BackgroundTasks, tenan
     background_tasks.add_task(run_insights_analysis, tenant_id, account_id)
     return {"status":"running","message":"Analysis started — check back in 30 seconds"}
 
+@router.get("/check")
+async def check_and_run_insights(
+    account_id: str,
+    background_tasks: BackgroundTasks,
+    tenant_id: str = Depends(get_current_tenant)
+):
+    """Auto-run once per week on first check of the week."""
+    from datetime import datetime, timedelta
+    # Check last run
+    res = supabase_admin.table("insights").select("generated_at")        .eq("tenant_id", tenant_id).order("generated_at", desc=True).limit(1).execute()
+    last_run = None
+    if res.data:
+        try:
+            last_run = datetime.fromisoformat(str(res.data[0]["generated_at"]).replace("Z","").replace("+00:00",""))
+        except Exception: pass
+    # Run if never run or more than 7 days ago
+    should_run = (last_run is None) or (datetime.utcnow() - last_run > timedelta(days=7))
+    can_run, _ = _can_run_insights(tenant_id)
+    if should_run and can_run:
+        background_tasks.add_task(run_insights_analysis, tenant_id, account_id)
+        return {"status": "running", "message": "Weekly analysis started"}
+    return {"status": "ok", "last_run": str(last_run) if last_run else None}
+
 @router.get("/latest")
 async def get_latest_insights(account_id: Optional[str] = None, tenant_id: str = Depends(get_current_tenant)):
     query = supabase_admin.table("insights").select("*").eq("tenant_id",tenant_id).order("generated_at",desc=True).limit(1)
