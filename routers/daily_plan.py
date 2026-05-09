@@ -107,7 +107,7 @@ async def get_weekly_plan(
 
     # Build daily rows Mon-Fri
     weekly_rows = []
-    weekly_stats = {"PASS":0,"FAIL":0,"RISKY":0,"NO_TRADES":0}
+    weekly_stats = {"EXCELLENT":0,"PASS":0,"FAIL":0,"RISKY":0}
     week_profit = 0
 
     for i in range(5):  # Mon-Fri
@@ -154,6 +154,7 @@ async def get_weekly_plan(
         "days":          weekly_rows,
         "summary":       weekly_stats,
         "trading_days":  sum(1 for r in weekly_rows if r["status"] not in ["FUTURE","NO_TRADES"]),
+        "excellent_days":weekly_stats["EXCELLENT"],
         "pass_days":     weekly_stats["PASS"],
         "fail_days":     weekly_stats["FAIL"],
         "risky_days":    weekly_stats["RISKY"],
