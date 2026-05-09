@@ -10,7 +10,6 @@ router = APIRouter(prefix="/api/v1/trades", tags=["trades"])
 class TradeSync(BaseModel):
     ticket:              int
     account_id:          str
-    signal_id:           Optional[str]   = None
     scanner:             str             = "MANUAL"
     symbol:              str
     bias:                str
@@ -54,7 +53,6 @@ async def sync_trades(
         data = {
             "tenant_id":         tenant_id,
             "account_id":        t.account_id,
-            "signal_id":         t.signal_id,
             "ticket":            t.ticket,
             "scanner":           t.scanner,
             "symbol":            t.symbol,
