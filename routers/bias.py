@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date
+from datetime import date, timedelta
 from core.auth import get_current_tenant, get_tenant_by_api_key
 from core.database import supabase_admin
 
@@ -40,7 +40,6 @@ async def sync_bias(body: BiasSync, tenant_id: str = Depends(get_tenant_by_api_k
         "bias_date":   today,
         "tenant_id":   None,
     }
-    # Check if already exists for today
     existing = supabase_admin.table("scanner_bias")\
         .select("id")\
         .eq("scanner", body.scanner)\
@@ -61,10 +60,12 @@ async def get_bias(
     scanner: Optional[str] = None,
     tenant_id: str = Depends(get_current_tenant)
 ):
-    today = str(date.today())
+    # Get last 7 days, return most recent per symbol
+    week_ago = str(date.today() - timedelta(days=7))
     query = supabase_admin.table("scanner_bias")\
         .select("*")\
-        .eq("bias_date", today)\
+        .gte("bias_date", week_ago)\
+        .order("bias_date", desc=True)\
         .order("symbol")
 
     if scanner:
@@ -73,9 +74,11 @@ async def get_bias(
     res = query.execute()
     rows = res.data or []
 
-    # Return as dict keyed by symbol
+    # Return latest per symbol (first occurrence = most recent)
     result = {}
     for row in rows:
-        result[row["symbol"]] = row
+        sym = row["symbol"]
+        if sym not in result:
+            result[sym] = row
 
     return result

@@ -159,6 +159,12 @@ async def list_trades(
     res = query.execute()
     return res.data or []
 
+# ── Delete all trades for tenant ──
+@router.delete("/all")
+async def delete_all_trades(tenant_id: str = Depends(get_current_tenant)):
+    supabase_admin.table("trades").delete().eq("tenant_id", tenant_id).execute()
+    return {"status": "ok", "message": "All trades deleted"}
+
 # ── Get screenshots for a specific trade (lazy load) ──
 @router.get("/{trade_id}/screenshots")
 async def get_screenshots(
