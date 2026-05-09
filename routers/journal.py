@@ -256,10 +256,8 @@ Analyse the chart and return ONLY valid JSON. You are a behavioural analyst — 
   "market_condition_tags": [],
   "trendline_touches": 0,
   "trendline_type": "",
-  "entry_score": 5,
   "structural_observation": "",
   "key_zone": "",
-  "entry_quality": "Average",
   "news_risk": false,
   "computed_tag": ""
 }}
@@ -346,7 +344,7 @@ JSON only, no markdown
             "entry_analysis": json.dumps(result),
         }).eq("id", trade_id).execute()
 
-        print(f"[Entry Analysis] {symbol} {bias} score={result.get('entry_score')} tp={result.get('tp_probability')}%")
+        print(f"[Entry Analysis] {symbol} {bias} tags={result.get('setup_tags')} trendline={result.get('trendline_touches')}x")
 
     except Exception as e:
         print(f"[Entry Analysis] Error: {e}")
