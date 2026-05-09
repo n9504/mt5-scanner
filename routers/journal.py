@@ -409,8 +409,7 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
         '  \"what_went_right\": \"\",\n'
         '  \"what_went_wrong\": \"\",\n'
         '  \"lesson\": \"\",\n'
-        '  \"overall_analysis\": \"\",\n'
-        '  \"exit_score\": 0\n'
+        '  \"overall_analysis\": \"\"\n'
         "}\n\n"
         "emotion_tags (max 2, from charts only, not outcome):\n"
         "- Patient: entry at key H1/M15 structure level\n"
@@ -422,7 +421,6 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
         "what_went_wrong: Specific observation, or 'Trade followed plan' if WIN_TP\n"
         "lesson: One actionable lesson with price reference\n"
         f"overall_analysis: 2 sentences. 1: entry quality at {entry}. 2: exit at {close} vs plan TP={tp} SL={sl}\n"
-        "exit_score: 10=hit TP exactly, 7-9=profitable near TP, 4-6=early profit, 1-3=loss\n\n"
         "JSON only, no markdown"
     )})
 
@@ -456,7 +454,7 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
             "ai_analysis":   result.get("overall_analysis", ""),
         }).eq("id", trade_id).execute()
 
-        print(f"[Exit Analysis] {symbol} {bias} emotion={emotion_tags} exit_score={result.get('exit_score')}")
+        print(f"[Exit Analysis] {symbol} {bias} emotion={emotion_tags}")
 
     except Exception as e:
         print(f"[Exit Analysis] Error: {e}")
