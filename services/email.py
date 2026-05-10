@@ -304,6 +304,7 @@ def send_welcome_email(to: str, name: str, api_key: str, account_id: str = None)
         <a href="https://tradepattrnly.com/privacy">Privacy</a> ·
         <a href="https://tradepattrnly.com/refund">Cancellation</a>
       </p>
+      <p class="muted">&#9888;&#65039; This is an automated email — please do not reply to this address. For support, contact <a href="mailto:support@tradepattrnly.com">support@tradepattrnly.com</a></p>
       <p class="muted">You're receiving this because you created a TradePattrnly account.</p>
     </div>
 

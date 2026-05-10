@@ -154,14 +154,17 @@ def _get_images(trade: dict, fields: list) -> list:
 
 # Daily AI analysis limits per tier
 TIER_AI_LIMITS = {
-    "journal":  0,
+    "beta":     5,    # Beta: 5 AI analyses/day
     "starter":  10,
     "growth":   25,
     "pro":      50,
     "elite":    100,
-    "beta":     5,
+    "journal":  0,
     "free":     0,
 }
+
+# Tiers with behaviour insights enabled
+BEHAVIOUR_INSIGHT_TIERS = {"beta", "pro", "elite", "growth"}
 
 def _get_daily_ai_count(tenant_id: str) -> tuple:
     # Returns (count_today, tier_limit, subscription)

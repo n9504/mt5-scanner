@@ -44,8 +44,8 @@ async def register(body: RegisterRequest):
         "email":           body.email,
         "name":            body.name,
         "password_hash":   hashed,
-        "subscription":    "elite",        # Beta: everyone gets Elite free
-        "beta_expires_at": beta_expires,   # 14 days from signup
+        "subscription":    "beta",
+        "beta_expires_at": beta_expires,
         "is_beta":         True,
     }).execute()
 
