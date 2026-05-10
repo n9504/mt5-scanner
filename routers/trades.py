@@ -34,6 +34,7 @@ class TradeSync(BaseModel):
     post_exit_tracked:   Optional[bool]  = None
     tick_value:          Optional[float] = None
     tick_size:           Optional[float] = None
+    margin_level:        Optional[float] = None
 
 # ── EA syncs trade data (open + closed) ──
 @router.post("/sync")
@@ -45,6 +46,7 @@ async def sync_trades(
     updated = 0
     inserted = 0
     for t in trades:
+      try:
         # Check if trade exists
         existing = supabase_admin.table("trades")\
             .select("id, status")\
@@ -81,6 +83,7 @@ async def sync_trades(
         if t.post_exit_tracked is not None: data["post_exit_tracked"] = t.post_exit_tracked
         if t.tick_value is not None:        data["tick_value"]        = t.tick_value
         if t.tick_size  is not None:        data["tick_size"]         = t.tick_size
+        if t.margin_level is not None:    data["margin_level"]      = t.margin_level
 
         # Calculate exit quality if we have post-exit data
         if t.post_exit_high and t.post_exit_low and t.close_price and t.bias:
@@ -110,6 +113,11 @@ async def sync_trades(
                 bg.add_task(_trigger_entry_analysis, existing_id=None,
                            tenant_id=tenant_id, ticket=t.ticket)
 
+      except Exception as e:
+        import traceback
+        print(f"[TradeSync ERROR] {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"Trade sync error: {str(e)}")
+
     return {"inserted": inserted, "updated": updated}
 
 async def _trigger_entry_analysis(existing_id, tenant_id, ticket):
@@ -132,7 +140,7 @@ async def list_trades(
         "entry_price,sl,tp,close_price,rr_target,rr_actual,open_time,close_time,"
         "gross_pnl,commission,swap,net_pnl,execution_outcome,status,"
         "session,tags,notes,ai_analysis,entry_analysis,exit_analysis,"
-        "post_exit_tracked,post_exit_high,post_exit_low,exit_quality,tick_value,tick_size,created_at"
+        "post_exit_tracked,post_exit_high,post_exit_low,exit_quality,tick_value,tick_size,margin_level,created_at"
     )
     # No limit for all-time, 200 for filtered periods
     row_limit = 2000 if period == "all" else 200

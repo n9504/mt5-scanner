@@ -284,16 +284,14 @@ Analyse the chart and return ONLY valid JSON. You are a behavioural analyst — 
   "trendline_touches": 0,
   "trendline_type": "",
   "structural_observation": "",
-  "key_zone": "",
-  "news_risk": false,
-  "computed_tag": ""
+  "news_risk": false
 }}
 
 
 
-setup_tags: max 3, SETUP only (what structure at entry): ["FVG","OB","BOS","CHoCH","Support","Resistance","Trendline Touch","Trendline Break"]
-market_condition_tags: max 2, MARKET STATE: ["Trending","Range","Breakout","Reversal","High Volatility","Low Volatility","News Driven"]
-session_tag is auto-computed from time — do not include in tags
+setup_tags: max 3, ONLY chart structures visible: ["FVG","OB","BOS","CHoCH","Support","Resistance","Pullback","Trendline Touch","Trendline Break"]
+market_condition_tags: max 1, overall market state ONLY: ["Trending","Ranging","Breakout","Reversal"]
+Do NOT include session, emotion, or behaviour tags — those are computed by the system separately
 trendline_touches: count of visible trendline touches (0 if none)
 trendline_type: "ascending"/"descending"/"horizontal"/""
 structural_observation: describe ONLY what objectively occurred on the chart. Use post-trade observational language.
@@ -301,8 +299,7 @@ GOOD: "price moved above prior range", "horizontal level visible", "price expand
 AVOID: "bullish momentum", "buy levels", "bearish signal", "expect", "should", "indicates continuation"
 Describe what happened structurally. No predictions. No trading guidance.
 key_zone: the most significant price zone visible on the chart
-news_risk: true if high impact news within 15min of entry
-computed_tag: "Calm" if score>=7 AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "" otherwise
+news_risk: true if high impact news within 15min of entry — only flag, system handles tagging
 JSON only, no markdown
 """})
 
@@ -315,11 +312,29 @@ JSON only, no markdown
         text   = resp.content[0].text.strip().replace("```json","").replace("```","").strip()
         result = json.loads(text)
 
-        setup_tags = result.get("setup_tags", [])
+        setup_tags       = result.get("setup_tags", [])
+        market_cond_tags = result.get("market_condition_tags", [])
 
-        # Auto session tag from open_time
+        # Trendline → setup tag
+        if result.get("trendline_touches", 0) >= 2:
+            tl_type = result.get("trendline_type","")
+            if tl_type:
+                setup_tags.append(f"{tl_type.capitalize()} Trendline")
+
+        # News risk → system tag
+        news_tags = ["News Risk"] if result.get("news_risk") else []
+
+        # Session tag — system computed from time
         session_tag = _get_session_tag(trade.get("open_time", ""))
-        all_tags    = setup_tags + ([session_tag] if session_tag else [])
+
+        # Risk tag — system computed from margin_level
+        margin_level = float(trade.get("margin_level") or 0)
+        risk_tag = _get_risk_tag(margin_level)
+
+        # Combine all tag categories
+        all_tags = (setup_tags + market_cond_tags + news_tags +
+                    ([session_tag] if session_tag else []) +
+                    ([risk_tag] if risk_tag else []))
 
         # Merge with existing tags
         existing = trade.get("tags") or []
@@ -465,14 +480,13 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
         text   = resp.content[0].text.strip().replace("```json","").replace("```","").strip()
         result = json.loads(text)
 
-        emotion_tags = result.get("emotion_tags", [])
-
-        # Rule-based behaviour tags from outcome (override AI emotion guesses)
+        # Emotion tags — system computed only, no AI
+        emotion_tags = []
         behaviour_tag = _get_behaviour_tag(trade)
-        if behaviour_tag and behaviour_tag not in emotion_tags:
+        if behaviour_tag:
             emotion_tags.append(behaviour_tag)
 
-        # Add result tag
+        # Result tag
         result_tag = _get_result_tag(outcome)
         all_new_tags = emotion_tags + ([result_tag] if result_tag else [])
 
@@ -491,6 +505,13 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
     except Exception as e:
         print(f"[Exit Analysis] Error: {e}")
 
+
+def _get_risk_tag(margin_level: float) -> str:
+    if margin_level <= 0:    return ""
+    if margin_level > 1000:  return "No Risk"
+    if margin_level > 700:   return "Balanced Risk"
+    if margin_level > 300:   return "Elevated Risk"
+    return "Aggressive Risk"
 
 def _get_session_tag(open_time: str) -> str:
     if not open_time: return ""
