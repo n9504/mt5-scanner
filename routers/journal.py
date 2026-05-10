@@ -107,49 +107,73 @@ TIER_AI_LIMITS = {
 }
 
 def _get_daily_ai_count(tenant_id: str) -> tuple:
-    """Returns (count_today, tier_limit, subscription)."""
-    from datetime import date, datetime
+    """Returns (count_today, tier_limit, subscription).
+    BETA LAUNCH: hardcoded 5/day for all users regardless of DB columns.
+    """
+    from datetime import date
     today = str(date.today())
-    t_res = supabase_admin.table("tenants")\
-        .select("subscription,is_beta,beta_expires_at,ai_analysis_count_today,ai_analysis_date")\
-        .eq("id", tenant_id).limit(1).execute()
-    if not t_res.data: return 0, 0, "free"
-    t = t_res.data[0]
 
-    sub = t.get("subscription","free")
-    # Check beta status
-    if t.get("is_beta") and t.get("beta_expires_at"):
+    # BETA LAUNCH - 5 AI analyses per day for everyone
+    # Change BETA_LAUNCH_ACTIVE to False when launching paid tiers
+    BETA_LAUNCH_ACTIVE = True
+    BETA_DAILY_LIMIT   = 5
+
+    # Get today's count - try multiple approaches
+    count = 0
+    try:
+        # Try dedicated counts table first
+        count_res = supabase_admin.table("daily_analysis_counts")\
+            .select("count")\
+            .eq("tenant_id", tenant_id)\
+            .eq("analysis_date", today)\
+            .limit(1).execute()
+        count = int(count_res.data[0]["count"]) if count_res.data else 0
+    except Exception:
         try:
-            expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
-            if datetime.utcnow() <= expires:
-                sub = "beta"
-        except: pass
-    # If no is_beta flag but has beta_expires_at set, still treat as beta
-    elif t.get("beta_expires_at") and not t.get("is_beta"):
-        try:
-            expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
-            if datetime.utcnow() <= expires:
-                sub = "beta"
-        except: pass
+            # Try tenants table columns
+            cnt_res = supabase_admin.table("tenants")\
+                .select("ai_analysis_count_today,ai_analysis_date")\
+                .eq("id", tenant_id).limit(1).execute()
+            if cnt_res.data:
+                stored = cnt_res.data[0].get("ai_analysis_date","")
+                if stored == today:
+                    count = int(cnt_res.data[0].get("ai_analysis_count_today") or 0)
+        except Exception:
+            count = 0
 
-    limit = TIER_AI_LIMITS.get(sub, 0)
-    stored_date = t.get("ai_analysis_date","")
-    count = int(t.get("ai_analysis_count_today") or 0)
-    if stored_date != today:
-        count = 0
-        supabase_admin.table("tenants").update({
-            "ai_analysis_count_today": 0,
-            "ai_analysis_date": today,
-        }).eq("id", tenant_id).execute()
+    if BETA_LAUNCH_ACTIVE:
+        return count, BETA_DAILY_LIMIT, "beta"
 
-    return count, limit, sub
+    # Normal tier logic (used after beta)
+    try:
+        t_res = supabase_admin.table("tenants")\
+            .select("subscription").eq("id", tenant_id).limit(1).execute()
+        sub = (t_res.data or [{}])[0].get("subscription","free")
+    except Exception:
+        sub = "free"
+    return count, TIER_AI_LIMITS.get(sub, 0), sub
 
 def _increment_daily_ai_count(tenant_id: str, current_count: int):
     from datetime import date
-    supabase_admin.table("tenants").update({
-        "ai_analysis_count_today": current_count + 1,
-        "ai_analysis_date": str(date.today()),
-    }).eq("id", tenant_id).execute()
+    today = str(date.today())
+    # Try dedicated table first
+    try:
+        existing = supabase_admin.table("daily_analysis_counts")            .select("id").eq("tenant_id", tenant_id).eq("analysis_date", today)            .limit(1).execute()
+        if existing.data:
+            supabase_admin.table("daily_analysis_counts")                .update({"count": current_count + 1})                .eq("tenant_id", tenant_id).eq("analysis_date", today).execute()
+        else:
+            supabase_admin.table("daily_analysis_counts")                .insert({"tenant_id": tenant_id, "analysis_date": today, "count": current_count + 1}).execute()
+        return
+    except Exception:
+        pass
+    # Fallback to tenants table columns
+    try:
+        supabase_admin.table("tenants").update({
+            "ai_analysis_count_today": current_count + 1,
+            "ai_analysis_date": today,
+        }).eq("id", tenant_id).execute()
+    except Exception:
+        pass
 
 
 def run_entry_analysis(trade_id: str, tenant_id: str):
