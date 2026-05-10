@@ -68,7 +68,9 @@ async def upload_screenshots(
     existing_entry_tags = list(trade.get("entry_tags") or [])
     existing_exit_tags  = list(trade.get("exit_tags")  or [])
 
-    if has_entry_ss and not existing_entry_tags:
+    print(f"[System Tags] has_entry={has_entry_ss} has_exit={has_exit_ss} existing_entry={existing_entry_tags}")
+
+    if has_entry_ss and len(existing_entry_tags) == 0:
         # Entry tags: session at open + plan quality
         entry_session = _get_session_tag(trade.get("open_time",""))
         plan_tag      = _get_plan_quality_tag(
@@ -92,7 +94,7 @@ async def upload_screenshots(
 
         print(f"[System Tags] Entry: {new_entry_tags} Risk: {risk_tag}")
 
-    if has_exit_ss and not existing_exit_tags:
+    if has_exit_ss and len(existing_exit_tags) == 0:
         # Exit tags: session at close + behaviour (computed after trade data available)
         exit_session  = _get_session_tag(trade.get("close_time","") or trade.get("open_time",""))
         behaviour_tag = _get_behaviour_tag(trade)
