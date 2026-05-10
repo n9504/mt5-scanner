@@ -59,6 +59,14 @@ def _get_risk_tag(margin_level: float) -> str:
     if margin_level > 300:  return "Elevated Risk"
     return "Aggressive Risk"
 
+def _get_result_tag(outcome: str) -> str:
+    oc = str(outcome).upper()
+    if "WIN_TP"    in oc: return "TP Hit"
+    if "LOSS_SL"   in oc: return "SL Hit"
+    if "TRAIL"     in oc: return "Trail"
+    if "MANUAL"    in oc: return "Manual Close"
+    return ""
+
 def _get_plan_tag(sl: float, tp: float, entry: float, bias: str) -> str:
     has_sl = sl and sl > 0
     has_tp = tp and tp > 0
@@ -135,11 +143,52 @@ async def sync_trades(
             else:                         data["exit_quality"] = "GOOD"
 
         if existing.data:
-            # Always update if incoming status is CLOSED (close beats open)
-            if t.status == "CLOSED" or existing.data[0]["status"] != "CLOSED":
+            ex = existing.data[0]
+            # Apply exit tags when trade first closes
+            if t.status == "CLOSED" and ex.get("status") != "CLOSED":
+                exit_session = _get_session(t.close_time or t.open_time or "")
+                result_tag   = _get_result_tag(t.execution_outcome or "")
+                outcome      = str(t.execution_outcome or "").upper()
+                is_win       = outcome.startswith("WIN")
+                sl_f   = float(t.sl or 0)
+                tp_f   = float(t.tp or 0)
+                entry_f = float(t.entry_price or 0)
+                close_f = float(t.close_price or 0)
+
+                behaviour_tag = ""
+                if not sl_f and not tp_f:
+                    behaviour_tag = "Lucky" if is_win else "Avoidable"
+                elif "WIN_TP" in outcome:
+                    behaviour_tag = "Calm"
+                elif "LOSS_SL" in outcome:
+                    behaviour_tag = "Disciplined"
+                elif "MANUAL" in outcome or "TRAIL" in outcome:
+                    if is_win and tp_f and entry_f:
+                        total    = abs(tp_f - entry_f)
+                        achieved = (close_f - entry_f) if t.bias == "BUY" else (entry_f - close_f)
+                        pct      = (achieved / total * 100) if total > 0 else 0
+                        behaviour_tag = "Patient" if pct >= 80 else "Conservative" if pct >= 50 else "Impatient"
+                    else:
+                        behaviour_tag = "Fear"
+
+                new_exit_tags = []
+                if exit_session:  new_exit_tags.append(exit_session)
+                if behaviour_tag: new_exit_tags.append(behaviour_tag)
+                if result_tag:    new_exit_tags.append(result_tag)
+
+                if new_exit_tags:
+                    data["exit_tags"] = new_exit_tags
+                    flat = list(ex.get("tags") or [])
+                    for tg in new_exit_tags:
+                        if tg not in flat: flat.append(tg)
+                    data["tags"] = flat
+                    print(f"[Exit Tags] {t.symbol} → {new_exit_tags}")
+
+            # Always update if incoming status is CLOSED
+            if t.status == "CLOSED" or ex["status"] != "CLOSED":
                 supabase_admin.table("trades")\
                     .update(data)\
-                    .eq("id", existing.data[0]["id"])\
+                    .eq("id", ex["id"])\
                     .execute()
                 updated += 1
         else:
