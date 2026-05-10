@@ -43,7 +43,7 @@ async def upload_screenshots(
     tenant_id:        str = Depends(get_tenant_by_api_key)
 ):
     res = supabase_admin.table("trades")\
-        .select("id, ai_analysis, entry_analysis, exit_analysis, status, tags")\
+        .select("id, ai_analysis, entry_analysis, exit_analysis, status, tags, entry_tags, exit_tags, open_time, close_time, sl, tp, entry_price, bias, margin_level, ticket, account_id")\
         .eq("tenant_id", tenant_id)\
         .eq("ticket", body.ticket)\
         .limit(1).execute()
@@ -63,15 +63,63 @@ async def upload_screenshots(
     if body.screenshot_h1_entry: updates["screenshot_h1_entry"] = body.screenshot_h1_entry
     if body.screenshot_h1_exit:  updates["screenshot_h1_exit"]  = body.screenshot_h1_exit
 
+    # ── SYSTEM TAGS FIRST — no AI needed ──
+    existing_tags       = list(trade.get("tags")       or [])
+    existing_entry_tags = list(trade.get("entry_tags") or [])
+    existing_exit_tags  = list(trade.get("exit_tags")  or [])
+
+    if has_entry_ss and not existing_entry_tags:
+        # Entry tags: session at open + plan quality
+        entry_session = _get_session_tag(trade.get("open_time",""))
+        plan_tag      = _get_plan_quality_tag(
+            float(trade.get("sl") or 0),
+            float(trade.get("tp") or 0),
+            float(trade.get("entry_price") or 0),
+            trade.get("bias","BUY")
+        )
+        risk_tag = _get_risk_tag(float(trade.get("margin_level") or 0))
+
+        new_entry_tags = []
+        if entry_session: new_entry_tags.append(entry_session)
+        if plan_tag:      new_entry_tags.append(plan_tag)
+
+        updates["entry_tags"] = new_entry_tags
+
+        # Risk tag stored in flat tags
+        if risk_tag and risk_tag not in existing_tags:
+            existing_tags.append(risk_tag)
+            updates["tags"] = existing_tags
+
+        print(f"[System Tags] Entry: {new_entry_tags} Risk: {risk_tag}")
+
+    if has_exit_ss and not existing_exit_tags:
+        # Exit tags: session at close + behaviour (computed after trade data available)
+        exit_session  = _get_session_tag(trade.get("close_time","") or trade.get("open_time",""))
+        behaviour_tag = _get_behaviour_tag(trade)
+        result_tag    = _get_result_tag(str(trade.get("execution_outcome","")))
+
+        new_exit_tags = []
+        if exit_session:  new_exit_tags.append(exit_session)
+        if behaviour_tag: new_exit_tags.append(behaviour_tag)
+        if result_tag:    new_exit_tags.append(result_tag)
+
+        updates["exit_tags"] = new_exit_tags
+        # Merge into flat tags too
+        for t in new_exit_tags:
+            if t not in existing_tags:
+                existing_tags.append(t)
+        updates["tags"] = existing_tags
+
+        print(f"[System Tags] Exit: {new_exit_tags}")
+
     if updates:
         supabase_admin.table("trades").update(updates).eq("id", trade_id).execute()
 
+    # ── AI ANALYSIS AFTER SYSTEM TAGS ──
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
-        # Run entry analysis when entry screenshots arrive
         if has_entry_ss and not trade.get("entry_analysis"):
             background_tasks.add_task(run_entry_analysis, trade_id, tenant_id)
-        # Run exit analysis when exit screenshots arrive
         if has_exit_ss and not trade.get("exit_analysis"):
             background_tasks.add_task(run_exit_analysis, trade_id, tenant_id)
 
@@ -519,6 +567,19 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
     except Exception as e:
         print(f"[Exit Analysis] Error: {e}")
 
+
+def _get_plan_quality_tag(sl: float, tp: float, entry: float, bias: str) -> str:
+    has_sl = sl and sl > 0
+    has_tp = tp and tp > 0
+    if not has_sl and not has_tp: return "Reckless"
+    if has_sl and not has_tp:     return "Forcing Trade"
+    if not has_sl and has_tp:     return "Gamble"
+    try:
+        risk   = abs(float(entry) - float(sl))
+        reward = abs(float(tp)    - float(entry))
+        rr     = reward / risk if risk > 0 else 0
+        return "Clarity" if rr >= 0.7 else "Desperate"
+    except: return "Clarity"
 
 def _get_risk_tag(margin_level: float) -> str:
     if margin_level <= 0:    return ""
