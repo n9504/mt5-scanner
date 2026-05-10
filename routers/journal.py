@@ -107,73 +107,41 @@ TIER_AI_LIMITS = {
 }
 
 def _get_daily_ai_count(tenant_id: str) -> tuple:
-    """Returns (count_today, tier_limit, subscription).
-    BETA LAUNCH: hardcoded 5/day for all users regardless of DB columns.
-    """
-    from datetime import date
+    """Returns (count_today, tier_limit, subscription)."""
+    from datetime import date, datetime
     today = str(date.today())
+    t_res = supabase_admin.table("tenants")\
+        .select("subscription,is_beta,beta_expires_at,ai_analysis_count_today,ai_analysis_date")\
+        .eq("id", tenant_id).limit(1).execute()
+    if not t_res.data: return 0, 0, "free"
+    t = t_res.data[0]
 
-    # BETA LAUNCH - 5 AI analyses per day for everyone
-    # Change BETA_LAUNCH_ACTIVE to False when launching paid tiers
-    BETA_LAUNCH_ACTIVE = True
-    BETA_DAILY_LIMIT   = 5
-
-    # Get today's count - try multiple approaches
-    count = 0
-    try:
-        # Try dedicated counts table first
-        count_res = supabase_admin.table("daily_analysis_counts")\
-            .select("count")\
-            .eq("tenant_id", tenant_id)\
-            .eq("analysis_date", today)\
-            .limit(1).execute()
-        count = int(count_res.data[0]["count"]) if count_res.data else 0
-    except Exception:
+    sub = t.get("subscription","free")
+    if t.get("is_beta") and t.get("beta_expires_at"):
         try:
-            # Try tenants table columns
-            cnt_res = supabase_admin.table("tenants")\
-                .select("ai_analysis_count_today,ai_analysis_date")\
-                .eq("id", tenant_id).limit(1).execute()
-            if cnt_res.data:
-                stored = cnt_res.data[0].get("ai_analysis_date","")
-                if stored == today:
-                    count = int(cnt_res.data[0].get("ai_analysis_count_today") or 0)
-        except Exception:
-            count = 0
+            expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
+            if datetime.utcnow() <= expires:
+                sub = "beta"
+        except: pass
 
-    if BETA_LAUNCH_ACTIVE:
-        return count, BETA_DAILY_LIMIT, "beta"
+    limit = TIER_AI_LIMITS.get(sub, 0)
+    stored_date = t.get("ai_analysis_date","")
+    count = int(t.get("ai_analysis_count_today") or 0)
+    if stored_date != today:
+        count = 0
+        supabase_admin.table("tenants").update({
+            "ai_analysis_count_today": 0,
+            "ai_analysis_date": today,
+        }).eq("id", tenant_id).execute()
 
-    # Normal tier logic (used after beta)
-    try:
-        t_res = supabase_admin.table("tenants")\
-            .select("subscription").eq("id", tenant_id).limit(1).execute()
-        sub = (t_res.data or [{}])[0].get("subscription","free")
-    except Exception:
-        sub = "free"
-    return count, TIER_AI_LIMITS.get(sub, 0), sub
+    return count, limit, sub
 
 def _increment_daily_ai_count(tenant_id: str, current_count: int):
     from datetime import date
-    today = str(date.today())
-    # Try dedicated table first
-    try:
-        existing = supabase_admin.table("daily_analysis_counts")            .select("id").eq("tenant_id", tenant_id).eq("analysis_date", today)            .limit(1).execute()
-        if existing.data:
-            supabase_admin.table("daily_analysis_counts")                .update({"count": current_count + 1})                .eq("tenant_id", tenant_id).eq("analysis_date", today).execute()
-        else:
-            supabase_admin.table("daily_analysis_counts")                .insert({"tenant_id": tenant_id, "analysis_date": today, "count": current_count + 1}).execute()
-        return
-    except Exception:
-        pass
-    # Fallback to tenants table columns
-    try:
-        supabase_admin.table("tenants").update({
-            "ai_analysis_count_today": current_count + 1,
-            "ai_analysis_date": today,
-        }).eq("id", tenant_id).execute()
-    except Exception:
-        pass
+    supabase_admin.table("tenants").update({
+        "ai_analysis_count_today": current_count + 1,
+        "ai_analysis_date": str(date.today()),
+    }).eq("id", tenant_id).execute()
 
 
 def run_entry_analysis(trade_id: str, tenant_id: str):
@@ -301,10 +269,7 @@ market_condition_tags: max 2, MARKET STATE: ["Trending","Range","Breakout","Reve
 session_tag is auto-computed from time — do not include in tags
 trendline_touches: count of visible trendline touches (0 if none)
 trendline_type: "ascending"/"descending"/"horizontal"/""
-structural_observation: describe ONLY what objectively occurred on the chart. Use post-trade observational language.
-GOOD: "price moved above prior range", "horizontal level visible", "price expanded above consolidation highs"  
-AVOID: "bullish momentum", "buy levels", "bearish signal", "expect", "should", "indicates continuation"
-Describe what happened structurally. No predictions. No trading guidance.
+structural_observation: describe ONLY what is structurally visible on the chart — zones, levels, patterns. NO trading guidance, NO "watch for", NO "if price does X". Pure structural description.
 key_zone: the most significant price zone visible on the chart
 news_risk: true if high impact news within 15min of entry
 computed_tag: "Calm" if score>=7 AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "" otherwise
