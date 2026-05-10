@@ -35,8 +35,45 @@ class TradeSync(BaseModel):
     tick_value:          Optional[float] = None
     tick_size:           Optional[float] = None
     margin_level:        Optional[float] = None
+    initial_sl:          Optional[float] = None
+    initial_tp:          Optional[float] = None
 
 # ── EA syncs trade data (open + closed) ──
+def _get_session(dt_str: str) -> str:
+    if not dt_str: return ""
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(str(dt_str).replace("Z","").replace("+00:00",""))
+        h  = dt.hour
+        if 0  <= h < 7:  return "Asia"
+        if 7  <= h < 12: return "London"
+        if 12 <= h < 17: return "London/US Overlap"
+        if 17 <= h < 21: return "US"
+        return "Asia"
+    except: return ""
+
+def _get_risk_tag(margin_level: float) -> str:
+    if margin_level <= 0:   return ""
+    if margin_level > 1000: return "No Risk"
+    if margin_level > 700:  return "Balanced Risk"
+    if margin_level > 300:  return "Elevated Risk"
+    return "Aggressive Risk"
+
+def _get_plan_tag(sl: float, tp: float, entry: float, bias: str) -> str:
+    has_sl = sl and sl > 0
+    has_tp = tp and tp > 0
+    if not has_sl and not has_tp: return "Reckless"
+    if has_sl and not has_tp:     return "Forcing Trade"
+    if not has_sl and has_tp:     return "Gamble"
+    # Both set — compute RR
+    try:
+        risk   = abs(float(entry) - float(sl))
+        reward = abs(float(tp)    - float(entry))
+        rr     = reward / risk if risk > 0 else 0
+        if rr >= 0.7: return "Clarity"
+        return "Desperate"
+    except: return "Clarity"
+
 @router.post("/sync")
 async def sync_trades(
     trades:    List[TradeSync],
@@ -106,6 +143,34 @@ async def sync_trades(
                     .execute()
                 updated += 1
         else:
+            # New trade — compute entry tags
+            if t.status == "OPEN":
+                entry_session = _get_session(t.open_time or "")
+                plan_tag      = _get_plan_tag(
+                    float(t.sl or 0), float(t.tp or 0),
+                    float(t.entry_price or 0), t.bias or "BUY"
+                )
+                risk_tag = _get_risk_tag(float(t.margin_level or 0))
+
+                # Build entry_tags list
+                entry_tags = []
+                if entry_session: entry_tags.append(entry_session)
+                if plan_tag:      entry_tags.append(plan_tag)
+
+                data["entry_tags"]  = entry_tags
+                data["exit_tags"]   = []
+
+                # Risk tag in its own category (store in tags for now, separate column later)
+                existing_tags = data.get("tags") or []
+                if risk_tag and risk_tag not in existing_tags:
+                    data["tags"] = existing_tags + [risk_tag]
+
+                # Record initial SL/TP — never overwrite these
+                if t.sl: data["initial_sl"] = t.sl
+                if t.tp: data["initial_tp"] = t.tp
+
+                print(f"[Entry Tags] {t.symbol} → {entry_tags} risk={risk_tag}")
+
             supabase_admin.table("trades").insert(data).execute()
             inserted += 1
             # Only trigger AI analysis for OPEN trades (live) not historical
@@ -207,6 +272,44 @@ async def performance(
     }
 
 # ── Get screenshots for a specific trade (lazy load) ──
+class SlMovedBody(BaseModel):
+    ticket:     int
+    account_id: str
+    sl_moved:   float
+
+class TpMovedBody(BaseModel):
+    ticket:     int
+    account_id: str
+    tp_moved:   float
+
+@router.post("/sl_moved")
+async def record_sl_moved(body: SlMovedBody, tenant_id: str = Depends(get_tenant_by_api_key)):
+    res = supabase_admin.table("trades").select("id,sl_mod_count,sl_1,sl_2,sl_3,sl_4,sl_5")        .eq("tenant_id", tenant_id).eq("ticket", body.ticket).limit(1).execute()
+    if not res.data: return {"status": "not_found"}
+    t   = res.data[0]
+    n   = int(t.get("sl_mod_count") or 0) + 1
+    col = f"sl_{min(n, 5)}"
+    supabase_admin.table("trades").update({
+        col: body.sl_moved,
+        "sl_mod_count": n,
+    }).eq("id", t["id"]).execute()
+    print(f"[SL Move] ticket={body.ticket} → {col}={body.sl_moved} count={n}")
+    return {"status": "ok", "column": col}
+
+@router.post("/tp_moved")
+async def record_tp_moved(body: TpMovedBody, tenant_id: str = Depends(get_tenant_by_api_key)):
+    res = supabase_admin.table("trades").select("id,tp_mod_count,tp_1,tp_2,tp_3,tp_4,tp_5")        .eq("tenant_id", tenant_id).eq("ticket", body.ticket).limit(1).execute()
+    if not res.data: return {"status": "not_found"}
+    t   = res.data[0]
+    n   = int(t.get("tp_mod_count") or 0) + 1
+    col = f"tp_{min(n, 5)}"
+    supabase_admin.table("trades").update({
+        col: body.tp_moved,
+        "tp_mod_count": n,
+    }).eq("id", t["id"]).execute()
+    print(f"[TP Move] ticket={body.ticket} → {col}={body.tp_moved} count={n}")
+    return {"status": "ok", "column": col}
+
 @router.get("/{trade_id}/screenshots")
 async def get_screenshots(
     trade_id:  str,

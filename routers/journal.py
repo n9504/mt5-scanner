@@ -397,9 +397,17 @@ JSON only, no markdown
 def run_exit_analysis(trade_id: str, tenant_id: str):
     """
     Runs when exit screenshots arrive.
-    Analyses: exit quality, emotion tags (based on behaviour not outcome),
-    what happened after, lessons.
+    Structural analysis only — no emotion tags (system computed separately).
     """
+    # Check daily AI analysis limit — shared with entry analysis
+    count_today, limit, sub = _get_daily_ai_count(tenant_id)
+    if limit == 0:
+        print(f"[Exit Analysis] Skipped — {sub} plan has no AI analysis")
+        return
+    if count_today >= limit:
+        print(f"[Exit Analysis] Daily limit reached: {count_today}/{limit}")
+        return
+
     import anthropic as ant
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key: return
@@ -451,14 +459,14 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
         "You have M15 and H1 charts for both entry and exit. Be SPECIFIC with price levels.\n"
         "Return ONLY valid JSON:\n\n"
         "{\n"
-        '  \"emotion_tags\": [],\n'
+        '  \"behaviour_tags\": [],\n'
         '  \"exit_reasoning\": \"\",\n'
         '  \"what_went_right\": \"\",\n'
         '  \"what_went_wrong\": \"\",\n'
         '  \"lesson\": \"\",\n'
         '  \"overall_analysis\": \"\"\n'
         "}\n\n"
-        "emotion_tags (max 2, from charts only, not outcome):\n"
+        "behaviour_tags (max 2, from charts only, not outcome):\n"
         "- Patient: entry at key H1/M15 structure level\n"
         "- FOMO: entry mid-move away from structure\n"
         "- Hesitated: late entry, signal was visible earlier\n"
@@ -480,27 +488,33 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
         text   = resp.content[0].text.strip().replace("```json","").replace("```","").strip()
         result = json.loads(text)
 
-        # Emotion tags — system computed only, no AI
-        emotion_tags = []
+        # Exit tags — system computed, no AI
+        # 1. Session at close time
+        exit_session  = _get_session_tag(trade.get("close_time", "") or trade.get("open_time",""))
+        # 2. Behaviour from SL/TP movement history
         behaviour_tag = _get_behaviour_tag(trade)
-        if behaviour_tag:
-            emotion_tags.append(behaviour_tag)
+        # 3. Result tag
+        result_tag    = _get_result_tag(outcome)
 
-        # Result tag
-        result_tag = _get_result_tag(outcome)
-        all_new_tags = emotion_tags + ([result_tag] if result_tag else [])
+        exit_tags = []
+        if exit_session:  exit_tags.append(exit_session)
+        if behaviour_tag: exit_tags.append(behaviour_tag)
+        if result_tag:    exit_tags.append(result_tag)
 
-        # Merge with existing tags
-        existing = trade.get("tags") or []
-        merged   = list(set(existing + all_new_tags))
+        # Merge with existing flat tags for backward compatibility
+        existing_tags = trade.get("tags") or []
+        merged_tags   = list(set(existing_tags + exit_tags))
 
         supabase_admin.table("trades").update({
-            "tags":          merged,
+            "exit_tags":     exit_tags,
+            "tags":          merged_tags,
             "exit_analysis": json.dumps(result),
             "ai_analysis":   result.get("overall_analysis", ""),
         }).eq("id", trade_id).execute()
 
-        print(f"[Exit Analysis] {symbol} {bias} emotion={emotion_tags}")
+        # Increment daily count
+        _increment_daily_ai_count(tenant_id, count_today)
+        print(f"[Exit Tags] {symbol} {bias} exit_tags={exit_tags} [{count_today+1}/{limit}]")
 
     except Exception as e:
         print(f"[Exit Analysis] Error: {e}")
@@ -528,39 +542,115 @@ def _get_session_tag(open_time: str) -> str:
 
 def _get_behaviour_tag(trade: dict) -> str:
     """
-    Rule-based behaviour detection from trade outcome.
-    Calm      = hit TP exactly as planned
-    Conservative = closed 60-90% of way to TP (trail/manual early exit)
-    Fear      = closed < 50% of way to TP on a winning trade
-    Disciplined = followed plan, closed at SL as planned
+    Full scenario engine — reads SL/TP movement history from alerts table.
+    Applies behaviour tags based on what actually happened during the trade.
+
+    Scenario table:
+    SL+TP unchanged + WIN_TP          → Disciplined
+    SL+TP unchanged + LOSS_SL         → Disciplined
+    SL tightened                       → Cautious
+    SL widened + WIN                   → Lucky
+    SL widened + LOSS + target reached → Greedy
+    SL widened + LOSS + in red         → Fear
+    SL removed + LOSS                  → Panic
+    TP reduced + WIN (target hit)      → Strategic
+    TP reduced + WIN (target not hit)  → Impatient
+    TP extended + WIN                  → Patient
+    TP extended + LOSS                 → Greedy
+    Manual exit after 2 losses         → Fear
+    WIN_TP no movements                → Calm
+    LOSS_SL no movements               → Disciplined
     """
-    outcome    = str(trade.get("execution_outcome","")).upper()
-    entry      = float(trade.get("entry_price") or 0)
-    close_price= float(trade.get("close_price") or 0)
-    tp         = float(trade.get("tp") or 0)
-    sl         = float(trade.get("sl") or 0)
-    bias       = str(trade.get("bias","BUY"))
+    outcome     = str(trade.get("execution_outcome","")).upper()
+    ticket      = trade.get("ticket")
+    entry       = float(trade.get("entry_price") or 0)
+    close_price = float(trade.get("close_price") or 0)
+    orig_tp     = float(trade.get("tp") or 0)
+    orig_sl     = float(trade.get("sl") or 0)
+    bias        = str(trade.get("bias","BUY"))
+    is_win      = "WIN" in outcome
+    is_loss     = "LOSS" in outcome
 
     if not entry or not close_price: return ""
 
-    if "WIN_TP" in outcome: return "Calm"
-    if "LOSS_SL" in outcome: return "Disciplined"
+    # Read SL/TP movement history from alerts table
+    sl_widened   = False
+    sl_tightened = False
+    sl_removed   = False
+    tp_extended  = False
+    tp_reduced   = False
+    tp_removed   = False
+    movements    = 0
 
-    # Manual/trail close — determine how far toward TP
-    if tp and sl and entry:
-        total_dist = abs(tp - entry)
-        if total_dist > 0:
-            if bias == "BUY":
-                achieved = close_price - entry
-            else:
-                achieved = entry - close_price
-            pct = achieved / total_dist * 100 if total_dist else 0
+    try:
+        alerts_res = supabase_admin.table("alerts")\
+            .select("type,data")\
+            .eq("ticket", str(ticket))\
+            .in_("type", ["SL_MOVED","TP_MOVED"])\
+            .execute()
 
-            if pct >= 90:   return "Calm"
-            if pct >= 60:   return "Conservative"
-            if pct >= 0:    return "Fear"
-            if pct < 0:     return "Disciplined"  # closed at loss
+        for alert in all_alerts:
+            try:
+                data = alert.get("data") or {}
+                if isinstance(data, str):
+                    import json as _json
+                    data = _json.loads(data)
+                direction = str(data.get("direction",""))
+                atype     = alert.get("type","")
+                movements += 1
 
+                if atype == "SL_MOVED":
+                    if direction == "widened":   sl_widened   = True
+                    if direction == "tightened": sl_tightened = True
+                    if direction == "removed":   sl_removed   = True
+                elif atype == "TP_MOVED":
+                    if direction == "extended":  tp_extended  = True
+                    if direction == "reduced":   tp_reduced   = True
+                    if direction == "removed":   tp_removed   = True
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[Behaviour] Alert read error: {e}")
+
+    # No movements — clean trade
+    if movements == 0:
+        if "WIN_TP" in outcome:  return "Calm"
+        if "LOSS_SL" in outcome: return "Disciplined"
+
+    # SL scenarios
+    if sl_removed and is_loss:   return "Panic"
+    if sl_widened and is_win:    return "Lucky"
+    if sl_widened and is_loss:
+        # Was target ever reached? Check if close near orig_tp
+        if orig_tp and abs(close_price - orig_tp) / max(abs(orig_tp - entry), 0.0001) < 0.1:
+            return "Greedy"
+        return "Fear"
+    if sl_tightened:             return "Cautious"
+
+    # TP scenarios
+    if tp_extended and is_win:   return "Patient"
+    if tp_extended and is_loss:  return "Greedy"
+    if tp_reduced  and is_win:
+        # Did they hit the reduced target or original?
+        return "Strategic"
+    if tp_reduced  and is_loss:  return "Impatient"
+
+    # Manual exit scenarios
+    if "MANUAL" in outcome or "TRAIL" in outcome:
+        if is_win:
+            if orig_tp and entry:
+                total = abs(orig_tp - entry)
+                achieved = abs(close_price - entry)
+                pct = achieved / total * 100 if total > 0 else 0
+                if pct >= 80: return "Patient"
+                if pct >= 50: return "Conservative"
+                return "Impatient"
+        else:
+            return "Fear"
+
+    # Fallback
+    if is_win:  return "Calm"
+    if is_loss: return "Disciplined"
     return ""
 
 
