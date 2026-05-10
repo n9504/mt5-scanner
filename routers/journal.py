@@ -98,7 +98,14 @@ async def upload_screenshots(
         # Exit tags: session at close + behaviour (computed after trade data available)
         exit_session  = _get_session_tag(trade.get("close_time","") or trade.get("open_time",""))
         behaviour_tag = _get_behaviour_tag(trade)
-        result_tag    = _get_result_tag(str(trade.get("execution_outcome","")))
+        result_tag    = _get_result_tag(
+            str(trade.get("execution_outcome","")),
+            float(trade.get("close_price") or 0),
+            float(trade.get("sl") or 0),
+            float(trade.get("tp") or 0),
+            float(trade.get("tick_size") or 0),
+            trade.get("bias","BUY")
+        )
 
         new_exit_tags = []
         if exit_session:  new_exit_tags.append(exit_session)
@@ -459,7 +466,14 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
     if not list(trade0.get("exit_tags") or []):
         exit_session  = _get_session_tag(trade0.get("close_time","") or trade0.get("open_time",""))
         behaviour_tag = _get_behaviour_tag(trade0)
-        result_tag    = _get_result_tag(str(trade0.get("execution_outcome","")))
+        result_tag    = _get_result_tag(
+            str(trade0.get("execution_outcome","")),
+            float(trade0.get("close_price") or 0),
+            float(trade0.get("sl") or 0),
+            float(trade0.get("tp") or 0),
+            float(trade0.get("tick_size") or 0),
+            trade0.get("bias","BUY")
+        )
 
         new_exit_tags = []
         if exit_session:  new_exit_tags.append(exit_session)
@@ -570,7 +584,14 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
         # 2. Behaviour from SL/TP movement history
         behaviour_tag = _get_behaviour_tag(trade)
         # 3. Result tag
-        result_tag    = _get_result_tag(outcome)
+        result_tag    = _get_result_tag(
+            outcome,
+            float(trade.get("close_price") or 0),
+            float(trade.get("sl") or 0),
+            float(trade.get("tp") or 0),
+            float(trade.get("tick_size") or 0),
+            trade.get("bias","BUY")
+        )
 
         exit_tags = []
         if exit_session:  exit_tags.append(exit_session)
@@ -743,12 +764,7 @@ def _get_behaviour_tag(trade: dict) -> str:
     return ""
 
 
-def _get_result_tag(outcome: str) -> str:
-    oc = str(outcome).upper()
-    if "TP"     in oc: return "TP Hit"
-    if "SL"     in oc: return "SL Hit"
-    if "TRAIL"  in oc: return "Trail"
-    if "MANUAL" in oc: return "Manual Close"
+def _get_result_tag(outcome: str, close: float = 0, sl: float = 0, tp: float = 0, tick_size: float = 0, bias: str = "BUY") -> str:
     return ""
 
 

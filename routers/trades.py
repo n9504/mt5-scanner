@@ -60,22 +60,7 @@ def _get_risk_tag(margin_level: float) -> str:
     return "Aggressive Risk"
 
 def _get_result_tag(outcome, entry, close, sl, tp, tick_size, bias):
-    oc = str(outcome).upper()
-    # No SL and no TP — always manual close
-    if not sl and not tp:
-        return "Manual Close"
-    threshold = 5 * tick_size if tick_size > 0 else 0
-    near_tp = tp > 0 and abs(close - tp) <= threshold
-    near_sl = sl > 0 and abs(close - sl) <= threshold
-    if near_tp: return "TP Hit"
-    if near_sl: return "SL Hit"
-    if "TRAIL" in oc: return "Trail"
-    if sl > 0 and tp > 0:
-        between = (sl < close < tp) if bias == "BUY" else (tp < close < sl)
-        if between: return "Manual Close"
-    if "TP" in oc: return "TP Hit"
-    if "SL" in oc: return "SL Hit"
-    return "Manual Close"
+    return ""
 
 
 def _get_sl_direction(initial_sl, sl_chain, bias):
