@@ -107,41 +107,59 @@ TIER_AI_LIMITS = {
 }
 
 def _get_daily_ai_count(tenant_id: str) -> tuple:
-    """Returns (count_today, tier_limit, subscription)."""
+    # Returns (count_today, tier_limit, subscription)
     from datetime import date, datetime
     today = str(date.today())
-    t_res = supabase_admin.table("tenants")\
-        .select("subscription,is_beta,beta_expires_at,ai_analysis_count_today,ai_analysis_date")\
-        .eq("id", tenant_id).limit(1).execute()
-    if not t_res.data: return 0, 0, "free"
-    t = t_res.data[0]
 
-    sub = t.get("subscription","free")
-    if t.get("is_beta") and t.get("beta_expires_at"):
-        try:
-            expires = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
-            if datetime.utcnow() <= expires:
-                sub = "beta"
-        except: pass
+    # Get subscription from DB
+    sub = "free"
+    try:
+        t_res = supabase_admin.table("tenants")\
+            .select("subscription,is_beta,beta_expires_at")\
+            .eq("id", tenant_id).limit(1).execute()
+        t   = (t_res.data or [{}])[0]
+        sub = t.get("subscription", "free")
+        # Override to beta if is_beta=true and not expired
+        if t.get("is_beta") and t.get("beta_expires_at"):
+            try:
+                exp = datetime.fromisoformat(str(t["beta_expires_at"]).replace("Z","").replace("+00:00",""))
+                if datetime.utcnow() <= exp:
+                    sub = "beta"
+            except: pass
+    except Exception:
+        sub = "free"
 
     limit = TIER_AI_LIMITS.get(sub, 0)
-    stored_date = t.get("ai_analysis_date","")
-    count = int(t.get("ai_analysis_count_today") or 0)
-    if stored_date != today:
-        count = 0
-        supabase_admin.table("tenants").update({
-            "ai_analysis_count_today": 0,
-            "ai_analysis_date": today,
-        }).eq("id", tenant_id).execute()
 
+    # Get today's count
+    count = 0
+    try:
+        count_res = supabase_admin.table("daily_analysis_counts")\
+            .select("count")\
+            .eq("tenant_id", tenant_id)\
+            .eq("analysis_date", today)\
+            .limit(1).execute()
+        count = int(count_res.data[0]["count"]) if count_res.data else 0
+    except Exception as e:
+        print(f"[AI COUNT] Read error: {e}")
+        count = 0
+
+    print(f"[AI LIMIT] sub={sub} count={count}/{limit}")
     return count, limit, sub
 
 def _increment_daily_ai_count(tenant_id: str, current_count: int):
     from datetime import date
-    supabase_admin.table("tenants").update({
-        "ai_analysis_count_today": current_count + 1,
-        "ai_analysis_date": str(date.today()),
-    }).eq("id", tenant_id).execute()
+    today = str(date.today())
+    try:
+        # Use upsert - simpler and more reliable than check+insert/update
+        supabase_admin.table("daily_analysis_counts").upsert({
+            "tenant_id":     tenant_id,
+            "analysis_date": today,
+            "count":         current_count + 1,
+        }, on_conflict="tenant_id,analysis_date").execute()
+        print(f"[AI COUNT] Count set to {current_count + 1} for {today}")
+    except Exception as e:
+        print(f"[AI COUNT] FAILED to increment: {e}")
 
 
 def run_entry_analysis(trade_id: str, tenant_id: str):
@@ -151,6 +169,7 @@ def run_entry_analysis(trade_id: str, tenant_id: str):
     """
     # Check daily AI analysis limit first
     count_today, limit, sub = _get_daily_ai_count(tenant_id)
+    print(f"[AI LIMIT CHECK] tenant={tenant_id} count={count_today} limit={limit} sub={sub}")
     if limit == 0:
         supabase_admin.table("trades").update({
             "entry_analysis": '{"skipped":true,"reason":"AI analysis not included in current plan. Upgrade to access entry scoring."}'
@@ -269,7 +288,10 @@ market_condition_tags: max 2, MARKET STATE: ["Trending","Range","Breakout","Reve
 session_tag is auto-computed from time — do not include in tags
 trendline_touches: count of visible trendline touches (0 if none)
 trendline_type: "ascending"/"descending"/"horizontal"/""
-structural_observation: describe ONLY what is structurally visible on the chart — zones, levels, patterns. NO trading guidance, NO "watch for", NO "if price does X". Pure structural description.
+structural_observation: describe ONLY what objectively occurred on the chart. Use post-trade observational language.
+GOOD: "price moved above prior range", "horizontal level visible", "price expanded above consolidation highs"  
+AVOID: "bullish momentum", "buy levels", "bearish signal", "expect", "should", "indicates continuation"
+Describe what happened structurally. No predictions. No trading guidance.
 key_zone: the most significant price zone visible on the chart
 news_risk: true if high impact news within 15min of entry
 computed_tag: "Calm" if score>=7 AND NOT news_risk | "Unclear Entry" if score<=4 | "News Risk" if news_risk | "" otherwise
