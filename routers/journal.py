@@ -683,3 +683,42 @@ async def analyse_trade(
     if res.data[0].get("status") == "CLOSED":
         background_tasks.add_task(run_exit_analysis, trade_id, tenant_id)
     return {"status": "analysis_started"}
+
+
+# ── Custom tags endpoints ──
+class CustomTagBody(BaseModel):
+    category: str  # 'setup' or 'market_condition'
+    tag_name: str
+
+@router.get("/custom-tags")
+async def get_custom_tags(tenant_id: str = Depends(get_current_tenant)):
+    res = supabase_admin.table("tenant_custom_tags")\
+        .select("category,tag_name")\
+        .eq("tenant_id", tenant_id).execute()
+    return res.data or []
+
+@router.post("/custom-tags")
+async def add_custom_tag(body: CustomTagBody, tenant_id: str = Depends(get_current_tenant)):
+    if body.category not in ("setup", "market_condition"):
+        raise HTTPException(400, "Invalid category")
+    tag = body.tag_name.strip()[:50]
+    if not tag:
+        raise HTTPException(400, "Tag name required")
+    try:
+        supabase_admin.table("tenant_custom_tags").insert({
+            "tenant_id": tenant_id,
+            "category":  body.category,
+            "tag_name":  tag,
+        }).execute()
+    except Exception:
+        pass  # Already exists — ignore
+    return {"status": "ok", "tag_name": tag}
+
+@router.delete("/custom-tags/{tag_name}")
+async def delete_custom_tag(tag_name: str, category: str, tenant_id: str = Depends(get_current_tenant)):
+    supabase_admin.table("tenant_custom_tags")\
+        .delete()\
+        .eq("tenant_id", tenant_id)\
+        .eq("category", category)\
+        .eq("tag_name", tag_name).execute()
+    return {"status": "ok"}
