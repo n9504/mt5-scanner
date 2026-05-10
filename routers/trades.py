@@ -59,13 +59,83 @@ def _get_risk_tag(margin_level: float) -> str:
     if margin_level > 300:  return "Elevated Risk"
     return "Aggressive Risk"
 
-def _get_result_tag(outcome: str) -> str:
+def _get_result_tag(outcome, entry, close, sl, tp, tick_size, bias):
     oc = str(outcome).upper()
-    if "WIN_TP"    in oc: return "TP Hit"
-    if "LOSS_SL"   in oc: return "SL Hit"
-    if "TRAIL"     in oc: return "Trail"
-    if "MANUAL"    in oc: return "Manual Close"
-    return ""
+    threshold = 5 * tick_size if tick_size > 0 else 0
+    near_tp = tp > 0 and abs(close - tp) <= threshold
+    near_sl = sl > 0 and abs(close - sl) <= threshold
+    if near_tp: return "TP Hit"
+    if near_sl: return "SL Hit"
+    if "TRAIL" in oc: return "Trail"
+    if sl > 0 and tp > 0:
+        between = (sl < close < tp) if bias == "BUY" else (tp < close < sl)
+        if between: return "Manual Close"
+    if "TP" in oc: return "TP Hit"
+    if "SL" in oc: return "SL Hit"
+    return "Manual Close"
+
+
+def _get_sl_direction(initial_sl, sl_chain, bias):
+    chain = [s for s in sl_chain if s and s > 0]
+    if not initial_sl or not chain:
+        return "none"
+    all_vals = [initial_sl] + chain
+    widened = False
+    trailed = False
+    for i in range(1, len(all_vals)):
+        prev = all_vals[i-1]
+        curr = all_vals[i]
+        if bias == "BUY":
+            if curr > prev: trailed = True
+            if curr < prev: widened = True
+        else:
+            if curr < prev: trailed = True
+            if curr > prev: widened = True
+    if widened: return "widened"
+    if trailed: return "trailing"
+    return "none"
+
+
+def _compute_exit_behaviour(outcome, bias, entry, close, sl, tp, tick_size, initial_sl, sl_chain, initial_tp):
+    oc = str(outcome).upper()
+    threshold = 5 * tick_size if tick_size > 0 else 0
+    is_win = close > entry if bias == "BUY" else close < entry
+    near_tp = tp > 0 and abs(close - tp) <= threshold
+    near_sl = sl > 0 and abs(close - sl) <= threshold
+    sl_dir = _get_sl_direction(initial_sl, sl_chain, bias)
+
+    if not sl and not tp:
+        return "Lucky" if is_win else "Avoidable"
+    if initial_sl and not sl and not is_win:
+        return "Panic"
+    if sl_dir == "widened":
+        return "Lucky" if is_win else "Fear"
+    if sl_dir == "trailing":
+        if near_tp: return "Calm"
+        if near_sl: return "Disciplined"
+        if is_win:
+            if tp and entry:
+                total = abs(tp - entry)
+                achieved = (close - entry) if bias == "BUY" else (entry - close)
+                pct = (achieved / total * 100) if total > 0 else 0
+                if pct >= 80: return "Patient"
+                if pct >= 50: return "Conservative"
+                return "Impatient"
+            return "Conservative"
+        return "Fear"
+    if near_tp: return "Calm"
+    if near_sl: return "Disciplined"
+    if is_win:
+        if tp and entry:
+            total = abs(tp - entry)
+            achieved = (close - entry) if bias == "BUY" else (entry - close)
+            pct = (achieved / total * 100) if total > 0 else 0
+            if pct >= 80: return "Patient"
+            if pct >= 50: return "Conservative"
+            return "Impatient"
+        return "Conservative"
+    return "Fear"
+
 
 def _get_plan_tag(sl: float, tp: float, entry: float, bias: str) -> str:
     has_sl = sl and sl > 0
@@ -94,7 +164,7 @@ async def sync_trades(
       try:
         # Check if trade exists
         existing = supabase_admin.table("trades")\
-            .select("id, status")\
+            .select("id, status, tags, entry_tags, exit_tags, initial_sl, initial_tp, sl_1, sl_2, sl_3, sl_4, sl_5")\
             .eq("tenant_id", tenant_id)\
             .eq("ticket", t.ticket)\
             .execute()
@@ -147,29 +217,31 @@ async def sync_trades(
             # Apply exit tags when trade first closes
             if t.status == "CLOSED" and ex.get("status") != "CLOSED":
                 exit_session = _get_session(t.close_time or t.open_time or "")
-                result_tag   = _get_result_tag(t.execution_outcome or "")
-                outcome      = str(t.execution_outcome or "").upper()
-                is_win       = outcome.startswith("WIN")
-                sl_f   = float(t.sl or 0)
-                tp_f   = float(t.tp or 0)
-                entry_f = float(t.entry_price or 0)
-                close_f = float(t.close_price or 0)
 
-                behaviour_tag = ""
-                if not sl_f and not tp_f:
-                    behaviour_tag = "Lucky" if is_win else "Avoidable"
-                elif "WIN_TP" in outcome:
-                    behaviour_tag = "Calm"
-                elif "LOSS_SL" in outcome:
-                    behaviour_tag = "Disciplined"
-                elif "MANUAL" in outcome or "TRAIL" in outcome:
-                    if is_win and tp_f and entry_f:
-                        total    = abs(tp_f - entry_f)
-                        achieved = (close_f - entry_f) if t.bias == "BUY" else (entry_f - close_f)
-                        pct      = (achieved / total * 100) if total > 0 else 0
-                        behaviour_tag = "Patient" if pct >= 80 else "Conservative" if pct >= 50 else "Impatient"
-                    else:
-                        behaviour_tag = "Fear"
+                # Get SL movement chain from existing trade record
+                sl_chain = [
+                    ex.get("sl_1"), ex.get("sl_2"), ex.get("sl_3"),
+                    ex.get("sl_4"), ex.get("sl_5")
+                ]
+                sl_chain = [s for s in sl_chain if s]
+
+                entry_f    = float(t.entry_price or 0)
+                close_f    = float(t.close_price or 0)
+                sl_f       = float(t.sl or 0)
+                tp_f       = float(t.tp or 0)
+                tick_size  = float(t.tick_size or 0)
+                initial_sl = float(ex.get("initial_sl") or 0)
+                initial_tp = float(ex.get("initial_tp") or 0)
+                bias       = t.bias or "BUY"
+                outcome    = t.execution_outcome or ""
+
+                behaviour_tag = _compute_exit_behaviour(
+                    outcome, bias, entry_f, close_f, sl_f, tp_f,
+                    tick_size, initial_sl, sl_chain, initial_tp
+                )
+                result_tag = _get_result_tag(
+                    outcome, entry_f, close_f, sl_f, tp_f, tick_size, bias
+                )
 
                 new_exit_tags = []
                 if exit_session:  new_exit_tags.append(exit_session)
