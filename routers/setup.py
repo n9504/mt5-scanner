@@ -12,6 +12,7 @@ class PersonalSetup(BaseModel):
     daily_profit_target: Optional[float] = None
     daily_loss_cap:      Optional[float] = None
     risk_per_trade_pct:  Optional[float] = 1.0
+    max_trades_per_day:  Optional[int]   = 4
 
 class PropSetup(BaseModel):
     account_id:              str
@@ -22,6 +23,7 @@ class PropSetup(BaseModel):
     prop_profit_cap:         Optional[float] = None
     prop_challenge_target:   Optional[float] = None
     risk_per_trade_pct:      Optional[float] = 1.0
+    max_trades_per_day:      Optional[int]   = 4
 
 class TimezoneSync(BaseModel):
     account_id: str
@@ -35,6 +37,7 @@ async def setup_personal(body: PersonalSetup, tenant_id: str = Depends(get_curre
         "daily_profit_target": body.daily_profit_target,
         "daily_loss_cap": body.daily_loss_cap,
         "risk_per_trade_pct": body.risk_per_trade_pct,
+        "max_trades_per_day": body.max_trades_per_day,
         "setup_complete": True,
     }).eq("id", body.account_id).eq("tenant_id", tenant_id).execute()
     return {"status": "ok"}
@@ -49,6 +52,7 @@ async def setup_prop(body: PropSetup, tenant_id: str = Depends(get_current_tenan
         "prop_profit_cap": body.prop_profit_cap,
         "prop_challenge_target": body.prop_challenge_target,
         "risk_per_trade_pct": body.risk_per_trade_pct,
+        "max_trades_per_day": body.max_trades_per_day,
         "setup_complete": True,
     }).eq("id", body.account_id).eq("tenant_id", tenant_id).execute()
     return {"status": "ok"}

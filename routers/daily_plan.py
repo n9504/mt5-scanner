@@ -28,13 +28,13 @@ async def get_today_plan(
 
     # Get account plan settings
     acc = supabase_admin.table("accounts")\
-        .select("daily_profit_target,daily_loss_cap,account_type,prop_daily_max_loss")\
+        .select("daily_profit_target,daily_loss_cap,account_type,prop_daily_max_loss,max_trades_per_day")\
         .eq("id", account_id).limit(1).execute()
     acc_data = (acc.data or [{}])[0]
 
     planned_profit    = float(acc_data.get("daily_profit_target") or 0)
     planned_max_loss  = float(acc_data.get("daily_loss_cap") or acc_data.get("prop_daily_max_loss") or 0)
-    planned_trades    = 4  # default - could add to account settings
+    planned_trades    = int(acc_data.get("max_trades_per_day") or 4)
 
     # Get today's actual trades
     res = supabase_admin.table("trades")\
@@ -78,13 +78,13 @@ async def get_weekly_plan(
 ):
     # Get account plan settings
     acc = supabase_admin.table("accounts")\
-        .select("daily_profit_target,daily_loss_cap,prop_daily_max_loss")\
+        .select("daily_profit_target,daily_loss_cap,prop_daily_max_loss,max_trades_per_day")\
         .eq("id", account_id).limit(1).execute()
     acc_data = (acc.data or [{}])[0]
 
     planned_profit   = float(acc_data.get("daily_profit_target") or 0)
     planned_max_loss = float(acc_data.get("daily_loss_cap") or acc_data.get("prop_daily_max_loss") or 0)
-    planned_trades   = 4
+    planned_trades   = int(acc_data.get("max_trades_per_day") or 4)
 
     # Get this week's trades
     today  = date.today()
