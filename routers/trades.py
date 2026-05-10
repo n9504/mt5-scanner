@@ -61,6 +61,9 @@ def _get_risk_tag(margin_level: float) -> str:
 
 def _get_result_tag(outcome, entry, close, sl, tp, tick_size, bias):
     oc = str(outcome).upper()
+    # No SL and no TP — always manual close
+    if not sl and not tp:
+        return "Manual Close"
     threshold = 5 * tick_size if tick_size > 0 else 0
     near_tp = tp > 0 and abs(close - tp) <= threshold
     near_sl = sl > 0 and abs(close - sl) <= threshold
