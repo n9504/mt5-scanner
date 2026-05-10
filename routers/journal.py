@@ -150,16 +150,24 @@ def _get_daily_ai_count(tenant_id: str) -> tuple:
 def _increment_daily_ai_count(tenant_id: str, current_count: int):
     from datetime import date
     today = str(date.today())
+    new_count = current_count + 1
     try:
-        # Use upsert - simpler and more reliable than check+insert/update
-        supabase_admin.table("daily_analysis_counts").upsert({
-            "tenant_id":     tenant_id,
-            "analysis_date": today,
-            "count":         current_count + 1,
-        }, on_conflict="tenant_id,analysis_date").execute()
-        print(f"[AI COUNT] Count set to {current_count + 1} for {today}")
+        if current_count == 0:
+            # First analysis today — insert
+            supabase_admin.table("daily_analysis_counts").insert({
+                "tenant_id":     tenant_id,
+                "analysis_date": today,
+                "count":         new_count,
+            }).execute()
+        else:
+            # Already exists — update
+            supabase_admin.table("daily_analysis_counts")\
+                .update({"count": new_count})\
+                .eq("tenant_id", tenant_id)\
+                .eq("analysis_date", today).execute()
+        print(f"[AI COUNT] count={new_count} for {today}")
     except Exception as e:
-        print(f"[AI COUNT] FAILED to increment: {e}")
+        print(f"[AI COUNT] FAILED: {e}")
 
 
 def run_entry_analysis(trade_id: str, tenant_id: str):
@@ -363,7 +371,9 @@ JSON only, no markdown
             "entry_analysis": json.dumps(result),
         }).eq("id", trade_id).execute()
 
-        print(f"[Entry Analysis] {symbol} {bias} tags={result.get('setup_tags')} trendline={result.get('trendline_touches')}x")
+        # Increment daily count AFTER successful analysis
+        _increment_daily_ai_count(tenant_id, count_today)
+        print(f"[Entry Analysis] {symbol} {bias} tags={result.get('setup_tags')} trendline={result.get('trendline_touches')}x [{count_today+1}/{limit}]")
 
     except Exception as e:
         print(f"[Entry Analysis] Error: {e}")
