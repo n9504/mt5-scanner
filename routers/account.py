@@ -34,9 +34,9 @@ async def sync_account(
     body:      AccountSync,
     tenant_id: str = Depends(get_tenant_by_api_key)
 ):
-    # Upsert account
+    # Upsert account — link pending account if exists, else create new
     existing = supabase_admin.table("accounts")\
-        .select("id")\
+        .select("id,pending")\
         .eq("tenant_id", tenant_id)\
         .eq("login", body.login)\
         .execute()
@@ -49,17 +49,35 @@ async def sync_account(
         "label":     body.label,
         "balance":   body.balance,
         "equity":    body.equity,
+        "active":    True,
+        "pending":   False,
     }
 
     if existing.data:
         supabase_admin.table("accounts")\
-            .update({"balance": body.balance, "equity": body.equity})\
+            .update({"balance": body.balance, "equity": body.equity, "pending": False})\
             .eq("id", existing.data[0]["id"])\
             .execute()
         account_id = existing.data[0]["id"]
     else:
-        res = supabase_admin.table("accounts").insert(data).execute()
-        account_id = res.data[0]["id"]
+        # Check for a pending (pre-generated) account to link
+        pending = supabase_admin.table("accounts")\
+            .select("id")\
+            .eq("tenant_id", tenant_id)\
+            .eq("pending", True)\
+            .limit(1).execute()
+
+        if pending.data:
+            # Link the pending account to this real MT5 account
+            supabase_admin.table("accounts")\
+                .update(data)\
+                .eq("id", pending.data[0]["id"])\
+                .execute()
+            account_id = pending.data[0]["id"]
+            print(f"[Account] Linked pending account {account_id} to MT5 login {body.login}")
+        else:
+            res = supabase_admin.table("accounts").insert(data).execute()
+            account_id = res.data[0]["id"]
 
     return {"account_id": account_id, "balance": body.balance}
 

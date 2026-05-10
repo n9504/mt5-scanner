@@ -50,28 +50,52 @@ async def register(body: RegisterRequest):
     }).execute()
 
     tenant = res.data[0]
+    tenant_id = tenant["id"]
 
     # Create default config
     supabase_admin.table("configs").insert({
-        "tenant_id": tenant["id"]
+        "tenant_id": tenant_id
     }).execute()
 
-    token = create_token(tenant["id"])
+    # Auto-create a pending account — links to real MT5 on first sync
+    import uuid as _uuid
+    account_res = supabase_admin.table("accounts").insert({
+        "tenant_id": tenant_id,
+        "label":     "My Trading Account",
+        "pending":   True,
+        "login":     0,
+        "server":    "",
+        "currency":  "USD",
+        "balance":   0,
+        "equity":    0,
+        "active":    True,
+    }).execute()
+    account_id = account_res.data[0]["id"] if account_res.data else None
 
-    # Send welcome email with EA + instructions
+    # Store account_id on tenant for easy reference
+    if account_id:
+        supabase_admin.table("tenants").update({
+            "default_account_id": account_id
+        }).eq("id", tenant_id).execute()
+
+    token = create_token(tenant_id)
+
+    # Send welcome email with API key + account ID
     try:
         send_welcome_email(
-            to      = tenant["email"],
-            name    = tenant["name"] or tenant["email"].split("@")[0],
-            api_key = tenant["api_key"],
+            to         = tenant["email"],
+            name       = tenant["name"] or tenant["email"].split("@")[0],
+            api_key    = tenant["api_key"],
+            account_id = account_id,
         )
     except Exception as e:
         print(f"Welcome email failed: {e}")
 
     return {
-        "token":   token,
-        "api_key": tenant["api_key"],
-        "tenant":  {"id": tenant["id"], "email": tenant["email"], "name": tenant["name"]},
+        "token":      token,
+        "api_key":    tenant["api_key"],
+        "account_id": account_id,
+        "tenant":     {"id": tenant_id, "email": tenant["email"], "name": tenant["name"]},
     }
 
 @router.post("/login")
