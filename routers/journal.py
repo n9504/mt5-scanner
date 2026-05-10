@@ -449,7 +449,33 @@ def run_exit_analysis(trade_id: str, tenant_id: str):
     Runs when exit screenshots arrive.
     Structural analysis only — no emotion tags (system computed separately).
     """
-    # Check daily AI analysis limit — shared with entry analysis
+    # ── SYSTEM EXIT TAGS FIRST — always, regardless of AI limit ──
+    res0 = supabase_admin.table("trades").select(
+        "id,symbol,bias,execution_outcome,close_time,open_time,tags,exit_tags,sl,tp,entry_price,close_price,account_id,ticket"
+    ).eq("id", trade_id).limit(1).execute()
+    if not res0.data: return
+    trade0 = res0.data[0]
+
+    if not list(trade0.get("exit_tags") or []):
+        exit_session  = _get_session_tag(trade0.get("close_time","") or trade0.get("open_time",""))
+        behaviour_tag = _get_behaviour_tag(trade0)
+        result_tag    = _get_result_tag(str(trade0.get("execution_outcome","")))
+
+        new_exit_tags = []
+        if exit_session:  new_exit_tags.append(exit_session)
+        if behaviour_tag: new_exit_tags.append(behaviour_tag)
+        if result_tag:    new_exit_tags.append(result_tag)
+
+        if new_exit_tags:
+            existing = list(trade0.get("tags") or [])
+            merged   = list(set(existing + new_exit_tags))
+            supabase_admin.table("trades").update({
+                "exit_tags": new_exit_tags,
+                "tags":      merged,
+            }).eq("id", trade_id).execute()
+            print(f"[Exit System Tags] {trade0.get('symbol')} → {new_exit_tags}")
+
+    # ── AI ANALYSIS — subject to daily limit ──
     count_today, limit, sub = _get_daily_ai_count(tenant_id)
     if limit == 0:
         print(f"[Exit Analysis] Skipped — {sub} plan has no AI analysis")

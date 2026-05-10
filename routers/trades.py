@@ -205,6 +205,7 @@ async def list_trades(
         "entry_price,sl,tp,close_price,rr_target,rr_actual,open_time,close_time,"
         "gross_pnl,commission,swap,net_pnl,execution_outcome,status,"
         "session,tags,notes,ai_analysis,entry_analysis,exit_analysis,"
+        "entry_tags,exit_tags,"
         "post_exit_tracked,post_exit_high,post_exit_low,exit_quality,tick_value,tick_size,margin_level,created_at"
     )
     # No limit for all-time, 200 for filtered periods
